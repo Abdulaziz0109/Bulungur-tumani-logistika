@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "location": {
+      "title": "Location",
+      "description": "Represents a location marker on the map",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the location"
+        },
+        "type": {
+          "type": "string",
+          "description": "The category/type of the location (e.g., maktab, bogcha)"
+        },
+        "lat": {
+          "type": "number",
+          "description": "Latitude coordinate"
+        },
+        "lng": {
+          "type": "number",
+          "description": "Longitude coordinate"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["name", "type", "lat", "lng"]
+    }
+  },
+  "firestore": {
+    "/locations/{locationId}": {
+      "schema": "location",
+      "description": "Collection of map locations"
+    }
+  }
+}

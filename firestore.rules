@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Global helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    // Blueprint validations
+    function isValidLocation(data) {
+      return data.keys().hasAll(['name', 'type', 'lat', 'lng']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.type is string && data.type.size() > 0 && data.type.size() <= 50 &&
+             data.lat is number &&
+             data.lng is number;
+    }
+
+    match /locations/{locationId} {
+      // Locations are public information for rendering the map.
+      // E.g., showing where public schools and kindergartens are.
+      allow read: if isValidId(locationId);
+      allow list: if true; // Public list query for the map
+      allow create: if isSignedIn() && isValidId(locationId) && isValidLocation(incoming());
+      allow update: if isSignedIn() && isValidId(locationId) && isValidLocation(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'lat', 'lng'])
+      );
+      allow delete: if isSignedIn() && isValidId(locationId);
+    }
+  }
+}

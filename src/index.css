@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+@media print {
+  .leaflet-control-container {
+    display: none !important;
+  }
+}
