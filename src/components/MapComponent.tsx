@@ -1,11 +1,12 @@
-import { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents } from 'react-leaflet';
+import React, { useEffect, useState, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { collection, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import Papa from 'papaparse';
+import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { seedLocations } from '../data/seedLocations';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -40,12 +41,15 @@ interface Location {
 
 function Toggle({ label, checked, onChange, color = "bg-blue-600" }: { label: string, checked: boolean, onChange: (v: boolean) => void, color?: string }) {
   return (
-    <label className="flex items-center justify-between cursor-pointer group py-1">
+    <div 
+      className="flex items-center justify-between cursor-pointer group py-1"
+      onClick={() => onChange(!checked)}
+    >
       <span className="text-sm font-bold text-slate-700 group-hover:text-slate-900 transition-colors">{label}</span>
       <div className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${checked ? color : 'bg-slate-200'}`}>
         <div className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white transition-all duration-300 shadow-sm ${checked ? 'left-[calc(100%-1.25rem)]' : 'left-1'}`}></div>
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -57,6 +61,11 @@ export default function MapComponent() {
   const [routeStats, setRouteStats] = useState<{distance: number, duration: number} | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [districtBoundary, setDistrictBoundary] = useState<any>(null);
+
+  // Area Boundary Search States
+  const [searchAreaQuery, setSearchAreaQuery] = useState('');
+  const [isSearchingArea, setIsSearchingArea] = useState(false);
+  const [mahallaBoundary, setMahallaBoundary] = useState<any>(null);
 
   // States for Adding New Location
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -77,13 +86,41 @@ export default function MapComponent() {
 
   const mapRef = useRef<L.Map>(null);
   const markerRefs = useRef<{[key: string]: L.Marker | null}>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingCSV, setIsUploadingCSV] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Location[]>([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
+  // States for Radius Analysis
+  const [isRadiusMode, setIsRadiusMode] = useState(false);
+  const [radiusKm, setRadiusKm] = useState<number>(5);
+  const [radiusCenter, setRadiusCenter] = useState<[number, number] | null>(null);
+
+  // States for Optimal Center
+  const [optimalCenter, setOptimalCenter] = useState<[number, number] | null>(null);
+
+  // States for Economic Scenarios
+  const [fuelPrice, setFuelPrice] = useState<number>(8000); // 8000 so'm/litr
+  const [outsourcingPrice, setOutsourcingPrice] = useState<number>(5000); // 5000 so'm/km
+  const [activeScenario, setActiveScenario] = useState<'A' | 'B' | 'C'>('A');
+  const [optimizedRouteDistance, setOptimizedRouteDistance] = useState<number | null>(null);
+
   const { role, currentUser } = useAuth();
   const navigate = useNavigate();
+
+  const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    return R * c; // Distance in km
+  };
 
   const handleSearch = (q: string) => {
     setSearchQuery(q);
@@ -109,6 +146,37 @@ export default function MapComponent() {
     setIsSearchFocused(false);
   };
 
+  const searchAreaBoundary = async () => {
+    if (!searchAreaQuery.trim()) return;
+    setIsSearchingArea(true);
+    try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchAreaQuery)}&polygon_geojson=1&format=json&countrycodes=uz`);
+        const data = await res.json();
+
+        const filteredData = data.filter((item: any) => item.geojson && (item.geojson.type === 'Polygon' || item.geojson.type === 'MultiPolygon'));
+
+        if (filteredData.length > 0) {
+            const boundaryData = filteredData[0].geojson;
+            setMahallaBoundary(boundaryData);
+            
+            if (mapRef.current) {
+                const geojsonObj = L.geoJSON(boundaryData);
+                const bounds = geojsonObj.getBounds();
+                mapRef.current.fitBounds(bounds, { padding: [50, 50], duration: 1.5 });
+            }
+            setIsSettingsOpen(false); // Close settings to see the map
+            showToast("Hudud chegarasi topildi", "success");
+        } else {
+            showToast("Bu hududning chegarasi (Polygon) OpenStreetMap bazasida kiritilmagan", "error");
+        }
+    } catch (err) {
+        console.error("Area search error:", err);
+        showToast("Xatolik yuz berdi", "error");
+    } finally {
+        setIsSearchingArea(false);
+    }
+  };
+
   // Boshlang'ich nuqta (Default center - masalan, MMTB hududi)
   const center: [number, number] = [39.7, 67.35];
 
@@ -116,11 +184,30 @@ export default function MapComponent() {
   function LocationPicker() {
     useMapEvents({
       click(e) {
-        if (isPickingLocation) {
+        if (isPickingLocation && !isRadiusMode) {
           setNewLocLat(parseFloat(e.latlng.lat.toFixed(6)));
           setNewLocLng(parseFloat(e.latlng.lng.toFixed(6)));
           setIsPickingLocation(false);
           setIsAddModalOpen(true); // Re-open modal after picking
+        } else if (isRadiusMode) {
+          const lat = e.latlng.lat;
+          const lng = e.latlng.lng;
+          setRadiusCenter([lat, lng]);
+          
+          let schools = 0;
+          let kindergartens = 0;
+          let others = 0;
+          
+          locations.forEach(loc => {
+            const dist = getDistanceFromLatLonInKm(lat, lng, loc.lat, loc.lng);
+            if (dist <= radiusKm) {
+              if (loc.type === 'maktab') schools++;
+              else if (loc.type === 'dmtt' || loc.type === 'bogcha') kindergartens++;
+              else others++;
+            }
+          });
+          
+          showToast(`${radiusKm} km radiusda: ${schools} ta maktab, ${kindergartens} ta bog'cha${others > 0 ? `, ${others} ta boshqa` : ''} bor`, 'success');
         }
       }
     });
@@ -143,7 +230,7 @@ export default function MapComponent() {
 
   const handleAddLocation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (role !== 'admin') return;
+    if (!currentUser) return;
     if (!newLocName.trim() || !newLocType || newLocLat === '' || newLocLng === '') {
       showToast("Barcha maydonlarni to'ldiring", "error");
       return;
@@ -175,7 +262,7 @@ export default function MapComponent() {
   };
 
   const handleDeleteLocation = async (id: string | undefined) => {
-    if (role !== 'admin') return;
+    if (!currentUser) return;
     if (!id) return;
     if (window.confirm("Haqiqatan ham bu ob'ektni o'chirmoqchimisiz?")) {
       try {
@@ -189,6 +276,63 @@ export default function MapComponent() {
         showToast("O'chirishda xatolik yuz berdi!", "error");
       }
     }
+  };
+
+  const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!currentUser) {
+      showToast("Tizimga kirmagansiz", "error");
+      return;
+    }
+
+    setIsUploadingCSV(true);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        try {
+          const rows = results.data as any[];
+          let successCount = 0;
+          
+          for (let i = 0; i < rows.length; i += 500) {
+            const batch = writeBatch(db);
+            const chunk = rows.slice(i, i + 500);
+            
+            for (const row of chunk) {
+              if (row.name && row.type && row.lat && row.lng) {
+                const docRef = doc(collection(db, 'locations'));
+                batch.set(docRef, {
+                  name: row.name.toString().trim(),
+                  type: row.type.toString().trim(),
+                  lat: parseFloat(row.lat),
+                  lng: parseFloat(row.lng)
+                });
+                successCount++;
+              }
+            }
+            await batch.commit();
+          }
+
+          showToast(`${successCount} ta ob'ekt muvaffaqiyatli bazaga qo'shildi!`, "success");
+          fetchLocations();
+        } catch (error) {
+          console.error("CSV import error:", error);
+          showToast("Xatolik yuz berdi", "error");
+        } finally {
+          setIsUploadingCSV(false);
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+        }
+      },
+      error: (error) => {
+        console.error("Papa Parse Error:", error);
+        showToast("Faylni o'qishda xatolik", "error");
+        setIsUploadingCSV(false);
+      }
+    });
   };
 
   useEffect(() => {
@@ -304,6 +448,16 @@ export default function MapComponent() {
           distance: route.distance, 
           duration: route.duration  
         });
+
+        // Background fetch for C scenario (optimized distance)
+        fetch(`https://router.project-osrm.org/trip/v1/driving/${coords}?roundtrip=false&source=first&overview=false`)
+          .then(r => r.json())
+          .then(d => {
+            if (d.code === 'Ok' && d.trips && d.trips.length > 0) {
+              setOptimizedRouteDistance(d.trips[0].distance);
+            }
+          })
+          .catch(e => console.error("Could not fetch optimized trip distance", e));
       }
     } catch (err) {
       console.error('Route calculation failed:', err);
@@ -326,9 +480,10 @@ export default function MapComponent() {
         setRouteGeometry(routeCoords);
         
         setRouteStats({
-          distance: parseFloat((trip.distance / 1000).toFixed(2)),
-          duration: Math.ceil(trip.duration / 60)
+          distance: trip.distance,
+          duration: trip.duration
         });
+        setOptimizedRouteDistance(trip.distance);
 
         if (data.waypoints) {
           const reordered = new Array(selectedLocations.length);
@@ -348,9 +503,27 @@ export default function MapComponent() {
     }
   };
 
+  const handleFindOptimalCenter = () => {
+    if (selectedLocations.length === 0) return;
+    const avgLat = selectedLocations.reduce((sum, loc) => sum + loc.lat, 0) / selectedLocations.length;
+    const avgLng = selectedLocations.reduce((sum, loc) => sum + loc.lng, 0) / selectedLocations.length;
+    setOptimalCenter([avgLat, avgLng]);
+    
+    if (mapRef.current) {
+      mapRef.current.flyTo([avgLat, avgLng], 14, { duration: 1.5 });
+    }
+    showToast("Optimal markaz (kenglik/uzunlik o'rtachasi) hisoblandi", "success");
+  };
+
   return (
-    <div className="w-full h-full relative font-sans text-slate-900 bg-[#f8fafc] overflow-hidden">
+    <div className="w-full h-full relative font-sans text-slate-900 bg-[#f8fafc] overflow-hidden print:overflow-visible print:bg-white print:p-8 print:h-auto print:-m-8">
       
+      {/* Print Document Header */}
+      <div className="hidden print:block text-center mb-6 border-b-2 border-slate-900 pb-4 shrink-0 mt-8">
+        <h1 className="text-xl font-black uppercase tracking-widest text-slate-900 mb-1">Maktabgacha va maktab ta'limi vazirligi</h1>
+        <h2 className="text-lg font-bold text-slate-700">Logistika marshruti va Xarajatlar smetasi</h2>
+      </div>
+
       {/* Header Panel */}
       <div className="print:hidden absolute top-6 left-6 z-[400] bg-white/95 backdrop-blur-md px-5 py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center space-x-4">
         <div className="flex items-center space-x-3">
@@ -378,13 +551,13 @@ export default function MapComponent() {
             </button>
           ) : (
             <>
-              {role === 'admin' && (
+              {currentUser && (
                 <button 
                   onClick={() => navigate('/admin')}
                   className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition-colors flex items-center space-x-1"
                 >
-                  <Shield className="w-4 h-4" />
-                  <span>Boshqaruv Paneli</span>
+                  <Settings2 className="w-4 h-4" />
+                  <span>Admin Panel</span>
                 </button>
               )}
               <button 
@@ -452,7 +625,7 @@ export default function MapComponent() {
       )}
 
       {/* Add Location Button */}
-      {!isPickingLocation && role === 'admin' && (
+      {!isPickingLocation && currentUser && (
         <button
           onClick={() => setIsAddModalOpen(true)}
           className="print:hidden absolute top-24 left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-5 pl-2 py-2 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-3 transition-all hover:scale-105 active:scale-95 group"
@@ -465,17 +638,22 @@ export default function MapComponent() {
       )}
 
       {/* Modal - Add Location */}
-      {isAddModalOpen && role === 'admin' && (
-        <div className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-6 pb-4 border-b border-slate-100 flex justify-between items-center">
+      {isAddModalOpen && currentUser && (
+        <div 
+          className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-md w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
+            <div className="p-6 pb-4 border-b border-slate-100 flex justify-between items-center shrink-0">
               <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">Yangi ob'ekt qo'shish</h2>
               <button onClick={() => setIsAddModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
             
-            <form onSubmit={handleAddLocation} className="p-6 space-y-5">
+            <form onSubmit={handleAddLocation} className="p-6 space-y-5 overflow-y-auto">
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Nomi</label>
                 <input 
@@ -538,7 +716,7 @@ export default function MapComponent() {
                 <button 
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full relative py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-xl shadow-[0_4px_14px_0_rgb(0,0,0,0.39)] hover:shadow-[0_6px_20px_rgba(0,0,0,0.23)] hover:shadow-slate-900/40 transition-all active:scale-95 disabled:opacity-70 disabled:shadow-none flex items-center justify-center overflow-hidden"
+                  className="w-full relative py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-xl shadow-[0_4px_14px_0_rgb(0,0,0,0.39)] hover:shadow-[0_6px_20px_rgba(0,0,0,0.23)] hover:shadow-slate-900/40 transition-all active:scale-95 disabled:opacity-70 disabled:shadow-none flex items-center justify-center overflow-hidden mb-4"
                 >
                   {isSubmitting ? (
                     <span className="flex items-center">
@@ -549,6 +727,41 @@ export default function MapComponent() {
                     "Saqlash"
                   )}
                 </button>
+                
+                {/* Bulk Import */}
+                <div className="pt-4 border-t border-slate-100">
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-center"><UploadCloud className="w-3 h-3 mr-1.5"/> Ommaviy yuklash (CSV)</h3>
+                  <input 
+                    type="file" 
+                    accept=".csv" 
+                    ref={fileInputRef} 
+                    onChange={handleBulkUpload} 
+                    className="hidden" 
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingCSV}
+                    className="w-full py-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200 font-bold text-sm rounded-xl transition-colors flex justify-center items-center space-x-2 mb-2"
+                  >
+                    {isUploadingCSV ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-emerald-600/30 border-t-emerald-600 rounded-full animate-spin"></div>
+                        <span>Yuklanmoqda...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UploadCloud className="w-4 h-4" />
+                        <span>📁 Excel (CSV) orqali yuklash</span>
+                      </>
+                    )}
+                  </button>
+                  <div className="text-center">
+                    <a href="data:text/csv;charset=utf-8,name,type,lat,lng%0A1-maktab,maktab,39.6543,66.9754%0A5-bog'cha,bogcha,39.6600,66.9800%0AMarkaziy shifoxona,boshqa,39.6680,66.9900" download="namuna.csv" className="text-[11px] font-bold text-indigo-500 hover:text-indigo-600 underline">
+                      namuna.csv yuklab olish
+                    </a>
+                  </div>
+                </div>
               </div>
             </form>
           </div>
@@ -557,9 +770,14 @@ export default function MapComponent() {
 
       {/* Settings Modal */}
       {isSettingsOpen && (
-        <div className="absolute inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
-             <div className="p-6 pb-4 border-b border-slate-100 flex justify-between items-center">
+        <div 
+          className="absolute inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsSettingsOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-md w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
+             <div className="p-6 pb-4 border-b border-slate-100 flex justify-between items-center shrink-0">
                 <h2 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center">
                   <Settings2 className="w-5 h-5 mr-2 text-indigo-600"/> 
                   Sozlamalar
@@ -568,7 +786,77 @@ export default function MapComponent() {
                   <X className="w-5 h-5" />
                 </button>
              </div>
-             <div className="p-6 space-y-6">
+             <div className="p-6 space-y-6 overflow-y-auto">
+                {/* Radius Analysis */}
+                <div>
+                   <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><Target className="w-3 h-3 mr-1.5"/> Radius Analizi (Qamrov)</h3>
+                   <div className="space-y-3">
+                      <div className="flex items-center space-x-2">
+                          <input 
+                              type="number" 
+                              min="1"
+                              max="100"
+                              placeholder="Radius (km)" 
+                              className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-sm font-semibold text-slate-900"
+                              value={radiusKm}
+                              onChange={(e) => setRadiusKm(Number(e.target.value))}
+                          />
+                          <span className="text-sm font-bold text-slate-500 shrink-0">km</span>
+                      </div>
+                      <Toggle 
+                          label="Radius analizini yoqish" 
+                          checked={isRadiusMode} 
+                          onChange={(v) => {
+                              setIsRadiusMode(v);
+                              if (!v) setRadiusCenter(null);
+                          }} 
+                          color="bg-indigo-600" 
+                      />
+                      {isRadiusMode && (
+                          <div className="text-xs text-slate-500 bg-indigo-50 p-3 rounded-lg border border-indigo-100 flex items-start mt-2">
+                             <Target className="w-4 h-4 text-indigo-500 mr-2 shrink-0 mt-0.5" />
+                             <p>Xaritadan istalgan nuqtani tanlasangiz, <b>{radiusKm} km</b> radiusdagi barcha ta'lim muassasalari soni hisoblanadi.</p>
+                          </div>
+                      )}
+                   </div>
+                </div>
+                
+                <div className="w-full h-px bg-slate-100"></div>
+
+                {/* Area Search */}
+                <div>
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><Search className="w-3 h-3 mr-1.5"/> Hudud / Mahalla chegarasini chizish</h3>
+                    <div className="flex items-center space-x-2">
+                        <input 
+                            type="text" 
+                            placeholder="Masalan: Oqtepa, Samarqand" 
+                            className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                            value={searchAreaQuery}
+                            onChange={(e) => setSearchAreaQuery(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') searchAreaBoundary() }}
+                        />
+                        <button 
+                            onClick={searchAreaBoundary}
+                            disabled={isSearchingArea}
+                            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-70 text-white font-bold text-sm rounded-xl transition-colors flex items-center shrink-0"
+                        >
+                            {isSearchingArea ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : "Chizish"}
+                        </button>
+                    </div>
+                    {mahallaBoundary && (
+                        <div className="mt-2 text-right">
+                            <button 
+                              onClick={() => { setMahallaBoundary(null); setSearchAreaQuery(''); }} 
+                              className="text-[10px] text-red-500 hover:text-red-700 font-bold tracking-wider uppercase"
+                            >
+                              Chegarani tozalash
+                            </button>
+                        </div>
+                    )}
+                </div>
+                
+                <div className="w-full h-px bg-slate-100"></div>
+
                 {/* Filters */}
                 <div>
                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><Layers className="w-3 h-3 mr-1.5"/> Ob'ektlarni ko'rsatish</h3>
@@ -601,13 +889,48 @@ export default function MapComponent() {
       <MapContainer 
         center={center} 
         zoom={12} 
-        className="w-full h-screen z-0"
+        className="w-full h-screen z-0 print:h-[400px] print:w-full print:border-2 print:border-slate-800 print:rounded-xl print:mb-8"
         ref={mapRef}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+
+        {/* Radius Circle */}
+        {isRadiusMode && radiusCenter && (
+           <Circle 
+             center={radiusCenter} 
+             radius={radiusKm * 1000} 
+             pathOptions={{ color: '#4f46e5', fillColor: '#4f46e5', fillOpacity: 0.15, weight: 2, dashArray: '5, 5' }}
+           />
+        )}
+
+        {/* Optimal Center Marker */}
+        {optimalCenter && (
+          <Marker 
+            position={optimalCenter}
+            icon={L.divIcon({
+              className: 'custom-optimal-marker',
+              html: `
+                <div style="font-size: 32px; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5)); transform: translate(-16px, -32px); text-align: center;">
+                  🏭
+                  <div style="position: absolute; top: 100%; left: 50%; transform: translateX(-50%); background: white; padding: 4px 8px; border-radius: 6px; border: 2px solid #ca8a04; font-weight: 800; font-size: 11px; color: #854d0e; white-space: nowrap; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 2px;">
+                    Eng Optimal Joy
+                  </div>
+                </div>
+              `
+            })}
+          >
+            <Popup className="font-sans">
+                <div className="text-center p-2">
+                    <Factory className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                    <h3 className="font-bold text-slate-900 mb-1">Tavsiya etilgan Baza Markazi</h3>
+                    <p className="text-xs text-slate-500">Kenglik: {optimalCenter[0].toFixed(5)}<br/>Uzunlik: {optimalCenter[1].toFixed(5)}</p>
+                </div>
+            </Popup>
+          </Marker>
+        )}
         
         {filteredLocations.map((loc) => (
           <Marker 
@@ -627,7 +950,7 @@ export default function MapComponent() {
                 >
                   Marshrutga qo'shish
                 </button>
-                {role === 'admin' && (
+                {currentUser && (
                   <button 
                     onClick={() => handleDeleteLocation(loc.id)}
                     className="print:hidden mt-2 w-full px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold rounded-lg transition-colors"
@@ -643,6 +966,13 @@ export default function MapComponent() {
           <GeoJSON 
             data={districtBoundary} 
             style={{ color: '#1e40af', weight: 3, fillColor: '#1e40af', fillOpacity: 0.05 }} 
+          />
+        )}
+        {mahallaBoundary && (
+          <GeoJSON 
+            key={JSON.stringify(mahallaBoundary)} // force remount when geometry changes
+            data={mahallaBoundary} 
+            style={{ color: '#ef4444', weight: 2, dashArray: '5, 5', fillColor: '#ef4444', fillOpacity: 0.1 }} 
           />
         )}
         {layers.highways && highwaysData && (
@@ -693,12 +1023,14 @@ export default function MapComponent() {
                     <div className="text-sm font-bold text-slate-800 truncate">{loc.name}</div>
                     <div className="text-[10px] text-slate-500 uppercase tracking-widest">{loc.type === 'dmtt' ? "Bog'cha" : loc.type}</div>
                   </div>
-                  <button 
-                    onClick={(e) => removeLocation(e, loc.id)}
-                    className="print:hidden p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  {currentUser && (
+                    <button 
+                      onClick={(e) => removeLocation(e, loc.id)}
+                      className="print:hidden p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               ))
             )}
@@ -740,65 +1072,131 @@ export default function MapComponent() {
               <Sparkles className="w-5 h-5" />
               <span>Aqlli Optimizatsiya (TSP)</span>
             </button>
+
+            {selectedLocations.length >= 2 && (
+               <button 
+                className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all border bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 shadow-md active:scale-95"
+                onClick={handleFindOptimalCenter}
+               >
+                 <Factory className="w-5 h-5" />
+                 <span>Optimal Markazni Topish</span>
+               </button>
+            )}
           </div>
         </div>
 
         {/* Economist / Analytics Panel */}
         {routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-6 rounded-3xl shadow-2xl border border-slate-100 shrink-0 animate-in slide-in-from-right-4 duration-300">
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-6 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-[340px] animate-in slide-in-from-right-4 duration-300 print:hidden">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
                 <Activity className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-extrabold text-md text-slate-900 tracking-tight">Iqtisodchi Paneli</h3>
+                <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Moliyaviy Ssenariylar</h3>
               </div>
               <button 
                 onClick={() => window.print()}
-                className="print:hidden w-8 h-8 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full transition-colors"
-                title="Hisobotni chop etish"
+                className="w-8 h-8 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full transition-colors"
+                title="Smetani chop etish"
               >
                 <Printer className="w-4 h-4" />
               </button>
             </div>
+
+            {/* Ssenariy Tanlash */}
+            <div className="bg-slate-100 p-1 flex items-center rounded-xl mb-4">
+               <button onClick={() => setActiveScenario('A')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'A' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>A (O'zimiz)</button>
+               <button onClick={() => setActiveScenario('B')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'B' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>B (Xususiy)</button>
+               <button onClick={() => setActiveScenario('C')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'C' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>C (Ekonom)</button>
+            </div>
             
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div className="p-3 bg-blue-50 border border-blue-100 rounded-2xl">
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="flex items-center space-x-1.5 mb-1 text-blue-600">
                   <MapIcon className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider">Masofa</span>
+                  <span className="text-[9px] font-bold uppercase tracking-wider">Masofa</span>
                 </div>
-                <div className="text-xl font-black text-slate-900">
-                  {(routeStats.distance / 1000).toFixed(1)} <span className="text-sm font-semibold text-slate-500">km</span>
+                <div className="text-xl font-black text-slate-900 leading-none mt-1">
+                  {((activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} <span className="text-sm font-semibold text-slate-500">km</span>
                 </div>
               </div>
-              <div className="p-3 bg-orange-50 border border-orange-100 rounded-2xl">
+              <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="flex items-center space-x-1.5 mb-1 text-orange-600">
                   <Clock className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider">Vaqt</span>
+                  <span className="text-[9px] font-bold uppercase tracking-wider">Vaqt</span>
                 </div>
-                <div className="text-xl font-black text-slate-900">
+                <div className="text-xl font-black text-slate-900 leading-none mt-1">
                   {Math.round(routeStats.duration / 60)} <span className="text-sm font-semibold text-slate-500">min</span>
                 </div>
               </div>
             </div>
 
+            {/* Input params based on scenario */}
+            <div className="mb-4">
+              {activeScenario === 'A' && (
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Yoqilg'i narxi (1L):</span>
+                  <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={fuelPrice} onChange={e => setFuelPrice(Number(e.target.value))} />
+                  <span className="text-xs font-bold text-slate-500">so'm</span>
+                </div>
+              )}
+              {activeScenario === 'B' && (
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Xizmat haqi (1km):</span>
+                  <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={outsourcingPrice} onChange={e => setOutsourcingPrice(Number(e.target.value))} />
+                  <span className="text-xs font-bold text-slate-500">so'm</span>
+                </div>
+              )}
+              {activeScenario === 'C' && (
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Yoqilg'i narxi (1L):</span>
+                  <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={fuelPrice} onChange={e => setFuelPrice(Number(e.target.value))} />
+                  <span className="text-xs font-bold text-slate-500">so'm</span>
+                </div>
+              )}
+            </div>
+
+            {/* Result Box */}
             <div className="p-4 bg-slate-900 text-white rounded-2xl relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
-              <div className="flex justify-between items-end relative z-10">
-                <div>
-                  <div className="flex items-center space-x-2 mb-1.5 text-slate-400">
-                    <Fuel className="w-4 h-4" />
-                    <span className="text-xs font-semibold uppercase tracking-wider">Yoqilg'i Sarfi</span>
+              
+              <div className="relative z-10 space-y-3">
+                  <div className="flex justify-between items-center pb-3 border-b border-white/10">
+                    <div>
+                      <div className="flex items-center space-x-2 mb-0.5 text-slate-400">
+                        <Fuel className="w-3.5 h-3.5" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wider">Yoqilg'i Sarfi</span>
+                      </div>
+                      <div className="text-slate-400 text-[9px] leading-tight max-w-[120px]">
+                        Norma (25L / 100km)
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xl font-black text-white leading-none">
+                        {(( (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000) / 100 * 25).toFixed(1)}
+                      </div>
+                      <div className="text-[10px] font-bold text-indigo-300">litr</div>
+                    </div>
                   </div>
-                  <div className="text-slate-400 text-[10px] leading-tight max-w-[140px]">
-                    ZIL/Toza hudud normasi (25L / 100km)
+                  
+                  <div>
+                    <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                      {activeScenario === 'B' ? "Autsorsing Jami Xarajati" : "Davlat Byudjetidan Jami Xarajat"}
+                    </div>
+                    <div className="flex items-end space-x-1.5">
+                       <span className="text-2xl font-black text-emerald-400 leading-none">
+                         {(() => {
+                            const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
+                            if (activeScenario === 'A' || activeScenario === 'C') {
+                               const liters = (distKm / 100) * 25;
+                               return Math.round(liters * fuelPrice).toLocaleString();
+                            } else {
+                               return Math.round(distKm * outsourcingPrice).toLocaleString();
+                            }
+                         })()}
+                       </span>
+                       <span className="text-xs font-bold text-emerald-500 mb-0.5">so'm</span>
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-black text-white">
-                    {((routeStats.distance / 1000) / 100 * 25).toFixed(1)}
-                  </div>
-                  <div className="text-xs font-bold text-indigo-300">litr</div>
-                </div>
               </div>
             </div>
           </div>
@@ -825,6 +1223,79 @@ export default function MapComponent() {
           </div>
         )}
       </div>
+
+      {/* Print Table Layout */}
+      {routeStats && (
+        <div className="hidden print:block mt-8 text-black border-t-2 border-dashed border-slate-300 pt-6 px-4">
+          <div className="flex justify-between items-start mb-6 font-bold text-sm">
+            <div>
+              <p>Optimizatsiya rejimi: <span className="font-normal text-slate-700">{activeScenario === 'C' ? "Yoqilgan" : "O'chirilgan"}</span></p>
+              <p>Moliya ssenariysi: <span className="font-normal text-slate-700">{activeScenario === 'A' ? "A (Davlat avtomobillari)" : activeScenario === 'B' ? "B (Autsorsing)" : "C (Ekonom rejim)"}</span></p>
+            </div>
+            <div className="text-right">
+              <p>Yoqilg'i narxi: <span className="font-normal text-slate-700">{fuelPrice} so'm/litr</span></p>
+              <p>Autsors narxi: <span className="font-normal text-slate-700">{outsourcingPrice} so'm/km</span></p>
+            </div>
+          </div>
+
+          <table className="w-full text-sm border-collapse border border-slate-800 mb-8">
+            <thead>
+              <tr className="bg-slate-100">
+                <th className="border border-slate-800 py-2 px-3 text-center w-12 font-bold uppercase text-[10px]">№</th>
+                <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Muassasa nomi</th>
+                <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Turi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedLocations.map((loc, i) => (
+                <tr key={loc.id}>
+                  <td className="border border-slate-800 py-1.5 px-3 text-center">{i + 1}</td>
+                  <td className="border border-slate-800 py-1.5 px-3 font-medium">{loc.name}</td>
+                  <td className="border border-slate-800 py-1.5 px-3">
+                     {loc.type === 'maktab' ? 'Maktab' : loc.type === 'bogcha' || loc.type === 'dmtt' ? "Bog'cha" : "Boshqa"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="flex justify-end mb-16">
+            <div className="min-w-[300px] border-2 border-slate-900 rounded-xl p-4 bg-slate-50">
+              <h4 className="font-bold border-b border-slate-300 pb-2 mb-3 uppercase text-xs tracking-widest text-center">Yakuniy Xarajat</h4>
+              
+              <div className="flex justify-between mb-2 text-sm">
+                <span className="font-semibold">Jami masofa:</span>
+                <span>{(((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} km</span>
+              </div>
+              <div className="flex justify-between mb-2 text-sm">
+                <span className="font-semibold">Sarflanadigan yoqilg'i:</span>
+                <span>{((((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000) / 100 * 25).toFixed(1)} litr</span>
+              </div>
+              <div className="flex justify-between mt-4 pt-4 border-t border-slate-800 font-black text-lg">
+                <span>Jami Summa:</span>
+                <span>
+                 {(() => {
+                    const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
+                    if (activeScenario === 'A' || activeScenario === 'C') {
+                       const liters = (distKm / 100) * 25;
+                       return Math.round(liters * fuelPrice).toLocaleString();
+                    } else {
+                       return Math.round(distKm * outsourcingPrice).toLocaleString();
+                    }
+                 })()} so'm
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end pr-12">
+            <div className="text-center font-bold">
+              <div className="mb-8">Iqtisodchi mutaxassis:</div>
+              <div className="border-t border-slate-900 w-48 mx-auto pt-2 text-sm text-slate-500 uppercase">(Imzo, F.I.O)</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
