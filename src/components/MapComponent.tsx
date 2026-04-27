@@ -14,10 +14,11 @@ const createDivIcon = (type: string, name: string) => {
   let bgColor = '#64748b'; // slate
   if (type === 'maktab') bgColor = '#2563eb'; // blue
   else if (type === 'bogcha' || type === 'dmtt') bgColor = '#ef4444'; // red-500
-  else if (type === 'boshqa') bgColor = '#059669'; // emerald
+  else if (type === 'boshqa' || type === 'tashkilot') bgColor = '#059669'; // emerald
 
-  const numMatch = name.match(/\d+/);
-  const label = numMatch ? numMatch[0] : name.charAt(0).toUpperCase();
+  const safeName = name || '?';
+  const numMatch = safeName.match(/\d+/);
+  const label = numMatch ? numMatch[0] : safeName.charAt(0).toUpperCase();
 
   return new L.DivIcon({
     className: 'bg-transparent border-0',
@@ -92,6 +93,7 @@ export default function MapComponent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Location[]>([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
 
   // States for Radius Analysis
   const [isRadiusMode, setIsRadiusMode] = useState(false);
@@ -387,19 +389,19 @@ export default function MapComponent() {
         ...doc.data()
       })) as Location[];
 
-      // Tizimda obyektlar bo'lmasa, dastlabki (seed) ma'lumotlarni ko'rsatamiz
-      if (locs.length === 0) {
-         console.log("Bazada ma'lumot yo'q. Lokal ma'lumotlar yuklanmoqda...");
-         locs = seedLocations
-           .filter(loc => loc.lat !== null && loc.lng !== null)
-           .map((loc, idx) => ({
+      const localLocs = seedLocations
+        .filter(loc => loc.lat !== null && loc.lng !== null)
+        .map((loc, idx) => ({
              id: `seed-${idx}`,
              name: loc.name,
              type: loc.type,
              lat: loc.lat as number,
              lng: loc.lng as number,
-           }));
-      }
+        }));
+        
+      // Combine local fallback data with Firestore data
+      // This prevents the map from emptying out when a few items are added to Firestore
+      locs = [...localLocs, ...locs];
 
       setLocations(locs);
     } catch (error) {
@@ -519,33 +521,33 @@ export default function MapComponent() {
     <div className="w-full h-full relative font-sans text-slate-900 bg-[#f8fafc] overflow-hidden print:overflow-visible print:bg-white print:p-8 print:h-auto print:-m-8">
       
       {/* Print Document Header */}
-      <div className="hidden print:block text-center mb-6 border-b-2 border-slate-900 pb-4 shrink-0 mt-8">
-        <h1 className="text-xl font-black uppercase tracking-widest text-slate-900 mb-1">Maktabgacha va maktab ta'limi vazirligi</h1>
-        <h2 className="text-lg font-bold text-slate-700">Logistika marshruti va Xarajatlar smetasi</h2>
+      <div className="hidden print:block text-center mb-8 border-b-2 border-slate-900 pb-4 shrink-0 mt-8">
+        <h1 className="text-xl font-black uppercase tracking-widest text-slate-900 mb-1">O'zbekiston Respublikasi, Maktabgacha va maktab ta'limi vazirligi</h1>
+        <h2 className="text-lg font-bold text-slate-700">Bulung'ur MMTB - Logistika marshruti va Xarajatlar Smetasi</h2>
       </div>
 
       {/* Header Panel */}
-      <div className="print:hidden absolute top-6 left-6 z-[400] bg-white/95 backdrop-blur-md px-5 py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center space-x-4">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
-            <MapIcon className="w-5 h-5 text-white" />
+      <div className="print:hidden absolute top-4 left-4 md:top-6 md:left-6 z-[400] bg-white/95 backdrop-blur-md px-3 py-2 md:px-5 md:py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center space-x-2 md:space-x-4 max-w-[calc(100vw-32px)]">
+        <div className="flex items-center space-x-2 md:space-x-3">
+          <div className="w-8 h-8 md:w-10 md:h-10 bg-blue-600 rounded-xl flex items-center justify-center shrink-0">
+            <MapIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-slate-800 leading-tight">
+            <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[120px] md:max-w-none">
               MMTB Logistika
             </h1>
-            <div className="flex items-center text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5"></span>
-               {currentUser ? (role === 'admin' ? 'Boshqaruvchi' : 'Iqtisodchi') : 'Mehmon'}
+            <div className="flex items-center text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 shrink-0"></span>
+               <span className="truncate">{currentUser ? (role === 'admin' ? 'Boshqaruvchi' : 'Iqtisodchi') : 'Mehmon'}</span>
             </div>
           </div>
         </div>
-        <div className="w-px h-8 bg-slate-200 mx-2"></div>
-        <div className="flex items-center space-x-2">
+        <div className="w-px h-6 md:h-8 bg-slate-200 mx-1 md:mx-2 shrink-0"></div>
+        <div className="flex items-center space-x-1 md:space-x-2 overflow-x-auto hide-scrollbar">
           {!currentUser ? (
             <button 
               onClick={() => navigate('/login')}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md transition-all font-sans"
+              className="px-2 py-1.5 md:px-4 md:py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] md:text-xs rounded-xl shadow-md transition-all font-sans whitespace-nowrap"
             >
               Tizimga kirish
             </button>
@@ -554,15 +556,15 @@ export default function MapComponent() {
               {currentUser && (
                 <button 
                   onClick={() => navigate('/admin')}
-                  className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition-colors flex items-center space-x-1"
+                  className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
                 >
-                  <Settings2 className="w-4 h-4" />
-                  <span>Admin Panel</span>
+                  <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
+                  <span className="hidden sm:inline">Admin Panel</span>
                 </button>
               )}
               <button 
                 onClick={() => auth.signOut()}
-                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-colors flex items-center space-x-1"
+                className="px-2 py-1.5 md:px-3 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 shrink-0"
                 title="Tizimdan chiqish"
               >
                  <LogOut className="w-4 h-4" />
@@ -573,7 +575,7 @@ export default function MapComponent() {
       </div>
 
       {/* Search Bar */}
-      <div className="print:hidden absolute top-6 left-1/2 transform -translate-x-1/2 z-[500] w-full max-w-[20rem] sm:max-w-md transition-all">
+      <div className="print:hidden absolute top-20 md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[90%] sm:max-w-md transition-all">
         <div className={`relative bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 flex items-center px-4 py-3 transition-colors ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
            <Search className="w-5 h-5 text-slate-400 mr-3" />
            <input 
@@ -607,18 +609,18 @@ export default function MapComponent() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className={`print:hidden absolute bottom-24 left-6 z-[600] px-6 py-3 rounded-xl text-sm font-bold shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 ${toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+        <div className={`print:hidden absolute bottom-36 md:bottom-24 left-1/2 transform -translate-x-1/2 md:left-6 md:translate-x-0 z-[600] px-4 md:px-6 py-2 md:py-3 rounded-xl text-xs md:text-sm font-bold shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 ${toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
           {toastMessage.text}
         </div>
       )}
 
       {/* Picking Mode Overlay */}
       {isPickingLocation && (
-        <div className="print:hidden absolute top-6 left-1/2 transform -translate-x-1/2 z-[400] bg-slate-900 text-white px-6 py-3 rounded-full flex items-center space-x-3 shadow-2xl hover:bg-slate-800 transition-colors">
-          <MousePointer2 className="w-5 h-5 text-blue-400 animate-pulse" />
-          <span className="font-semibold text-sm">Xaritadan joylashuvni chertib tanlang...</span>
-          <div className="w-px h-4 bg-slate-700 mx-1"></div>
-          <button onClick={() => { setIsPickingLocation(false); setIsAddModalOpen(true); }} className="text-xs text-slate-300 hover:text-white font-bold transition-colors">
+        <div className="print:hidden absolute top-20 md:top-6 left-1/2 transform -translate-x-1/2 z-[400] bg-slate-900 text-white px-4 md:px-6 py-2 md:py-3 rounded-full flex items-center space-x-2 md:space-x-3 shadow-2xl hover:bg-slate-800 transition-colors w-[90%] md:w-auto justify-center">
+          <MousePointer2 className="w-4 h-4 md:w-5 md:h-5 text-blue-400 animate-pulse shrink-0" />
+          <span className="font-semibold text-xs md:text-sm truncate">Xaritadan joylashuvni chertib tanlang...</span>
+          <div className="w-px h-3 md:h-4 bg-slate-700 mx-1 shrink-0"></div>
+          <button onClick={() => { setIsPickingLocation(false); setIsAddModalOpen(true); }} className="text-[10px] md:text-xs text-slate-300 hover:text-white font-bold transition-colors whitespace-nowrap shrink-0">
             Bekor qilish
           </button>
         </div>
@@ -628,7 +630,7 @@ export default function MapComponent() {
       {!isPickingLocation && currentUser && (
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="print:hidden absolute top-24 left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-5 pl-2 py-2 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-3 transition-all hover:scale-105 active:scale-95 group"
+          className="print:hidden absolute top-20 md:top-24 left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group"
         >
           <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
             <Plus className="w-4 h-4 text-blue-600" />
@@ -640,7 +642,7 @@ export default function MapComponent() {
       {/* Modal - Add Location */}
       {isAddModalOpen && currentUser && (
         <div 
-          className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsAddModalOpen(false);
           }}
@@ -771,7 +773,7 @@ export default function MapComponent() {
       {/* Settings Modal */}
       {isSettingsOpen && (
         <div 
-          className="absolute inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          className="absolute inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsSettingsOpen(false);
           }}
@@ -988,20 +990,61 @@ export default function MapComponent() {
       </MapContainer>
       
       {/* Floating Settings/Filters Button */}
-      <div className="print:hidden absolute bottom-6 left-6 z-[400] pointer-events-auto">
-        <button onClick={() => setIsSettingsOpen(true)} className="bg-white/95 backdrop-blur-md px-5 py-3 rounded-3xl shadow-2xl border border-slate-100 flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 text-slate-800">
-           <Settings2 className="w-5 h-5 text-indigo-600"/>
-           <span className="font-extrabold text-sm tracking-tight text-slate-700">Filtrlar</span>
+      <div className="print:hidden absolute bottom-24 md:bottom-6 left-4 md:left-6 z-[400] pointer-events-auto">
+        <button onClick={() => setIsSettingsOpen(true)} className="bg-white/95 backdrop-blur-md px-4 py-2 md:px-5 md:py-3 rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 text-slate-800">
+           <Settings2 className="w-4 h-4 md:w-5 md:h-5 text-indigo-600"/>
+           <span className="font-extrabold text-xs md:text-sm tracking-tight text-slate-700">Filtrlar</span>
         </button>
       </div>
 
+      {/* Mobile Toggle Navbar Button */}
+      <div className="print:hidden md:hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[400] pointer-events-auto">
+        <button 
+           onClick={() => setIsMobilePanelOpen(!isMobilePanelOpen)} 
+           className="bg-slate-900 px-6 py-3.5 rounded-full shadow-2xl border border-slate-700 flex items-center space-x-2 transition-all active:scale-95 text-white shadow-blue-900/20"
+        >
+           <Route className="w-5 h-5 text-indigo-400"/>
+           <span className="font-extrabold text-sm tracking-tight">Marshrut paneli</span>
+           {selectedLocations.length > 0 && (
+             <div className="ml-2 bg-indigo-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black">
+               {selectedLocations.length}
+             </div>
+           )}
+        </button>
+      </div>
+
+      {/* Mobile Overlay */}
+      {isMobilePanelOpen && (
+        <div 
+          className="md:hidden fixed inset-0 z-[440] bg-slate-900/40 backdrop-blur-sm transition-opacity pointer-events-auto"
+          onClick={() => setIsMobilePanelOpen(false)}
+        />
+      )}
+
       {/* Sidebar: Marshrut va Logistika */}
-      <div className="absolute top-6 right-6 bottom-6 z-[400] w-96 flex flex-col gap-4 pointer-events-none">
+      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'}`}>
         
         {/* Selected Locations Panel */}
-        <div className="flex-1 pointer-events-auto bg-white/95 backdrop-blur-md p-6 rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between mb-4">
+        <div className="flex-1 pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-t-3xl md:rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden max-h-[70vh] md:max-h-none h-full">
+          
+          {/* Mobile Handle & Close */}
+          <div className="flex items-center justify-between mb-4 md:hidden">
+            <div className="w-10"></div>
+            <div className="w-12 h-1.5 bg-slate-300 rounded-full cursor-pointer" onClick={() => setIsMobilePanelOpen(false)}></div>
+            <button onClick={() => setIsMobilePanelOpen(false)} className="w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-800 bg-slate-100 rounded-full">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between mb-4 shrink-0 hidden md:flex">
             <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut</h2>
+            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
+              <Route className="w-4 h-4" />
+            </div>
+          </div>
+          
+          <div className="flex items-center justify-between mb-4 shrink-0 md:hidden">
+            <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut paneli</h2>
             <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
               <Route className="w-4 h-4" />
             </div>
@@ -1087,7 +1130,7 @@ export default function MapComponent() {
 
         {/* Economist / Analytics Panel */}
         {routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-6 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-[340px] animate-in slide-in-from-right-4 duration-300 print:hidden">
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[80vh] md:max-h-none h-auto">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
                 <Activity className="w-5 h-5 text-indigo-600" />
@@ -1204,7 +1247,7 @@ export default function MapComponent() {
 
         {/* Legend Panel (Condensed version) */}
         {!routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-5 rounded-3xl shadow-xl border border-slate-100 shrink-0">
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-5 mx-2 md:mx-0 mb-4 md:mb-0 rounded-3xl shadow-xl border border-slate-100 shrink-0">
             <h4 className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-3">Xarita belgilari</h4>
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
@@ -1259,39 +1302,43 @@ export default function MapComponent() {
             </tbody>
           </table>
 
-          <div className="flex justify-end mb-16">
-            <div className="min-w-[300px] border-2 border-slate-900 rounded-xl p-4 bg-slate-50">
-              <h4 className="font-bold border-b border-slate-300 pb-2 mb-3 uppercase text-xs tracking-widest text-center">Yakuniy Xarajat</h4>
-              
-              <div className="flex justify-between mb-2 text-sm">
-                <span className="font-semibold">Jami masofa:</span>
-                <span>{(((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} km</span>
+          <div className="mb-16 border-2 border-slate-900 rounded-xl p-5 bg-slate-50 w-full max-w-2xl mx-auto">
+            <h4 className="font-black border-b-2 border-slate-900 pb-2 mb-4 uppercase text-sm tracking-widest text-center">Tasdiqlangan Xarajatlar Smetasi</h4>
+            
+            <div className="flex justify-between items-center mb-3 text-base">
+              <span className="font-bold">Jami marshrut uzunligi:</span>
+              <span className="font-semibold">{(((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} km</span>
+            </div>
+            {activeScenario !== 'B' && (
+              <div className="flex justify-between items-center mb-3 text-base">
+                <span className="font-bold">Taxminiy yoqilg'i sarfi:</span>
+                <span className="font-semibold">{((((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000) / 100 * 25).toFixed(1)} litr</span>
               </div>
-              <div className="flex justify-between mb-2 text-sm">
-                <span className="font-semibold">Sarflanadigan yoqilg'i:</span>
-                <span>{((((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000) / 100 * 25).toFixed(1)} litr</span>
-              </div>
-              <div className="flex justify-between mt-4 pt-4 border-t border-slate-800 font-black text-lg">
-                <span>Jami Summa:</span>
-                <span>
-                 {(() => {
-                    const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
-                    if (activeScenario === 'A' || activeScenario === 'C') {
-                       const liters = (distKm / 100) * 25;
-                       return Math.round(liters * fuelPrice).toLocaleString();
-                    } else {
-                       return Math.round(distKm * outsourcingPrice).toLocaleString();
-                    }
-                 })()} so'm
-                </span>
-              </div>
+            )}
+            <div className="flex justify-between items-center mt-6 pt-4 border-t-2 border-slate-900 font-black text-2xl">
+              <span>Tasdiqlangan summa:</span>
+              <span>
+               {(() => {
+                  const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
+                  if (activeScenario === 'A' || activeScenario === 'C') {
+                     const liters = (distKm / 100) * 25;
+                     return Math.round(liters * fuelPrice).toLocaleString();
+                  } else {
+                     return Math.round(distKm * outsourcingPrice).toLocaleString();
+                  }
+               })()} so'm
+              </span>
             </div>
           </div>
 
-          <div className="flex justify-end pr-12">
+          <div className="flex justify-between px-12 mt-20">
             <div className="text-center font-bold">
-              <div className="mb-8">Iqtisodchi mutaxassis:</div>
-              <div className="border-t border-slate-900 w-48 mx-auto pt-2 text-sm text-slate-500 uppercase">(Imzo, F.I.O)</div>
+              <div className="mb-12 text-left">Tasdiqlayman:<br/>MMTB Mudiri</div>
+              <div className="border-t border-slate-900 w-64 mx-auto pt-2 text-sm text-slate-500 uppercase">(Imzo, F.I.O)</div>
+            </div>
+            <div className="text-center font-bold">
+              <div className="mb-12 text-left">Tuzdi:<br/>Bosh Iqtisodchi</div>
+              <div className="border-t border-slate-900 w-64 mx-auto pt-2 text-sm text-slate-500 uppercase">(Imzo, F.I.O)</div>
             </div>
           </div>
         </div>
