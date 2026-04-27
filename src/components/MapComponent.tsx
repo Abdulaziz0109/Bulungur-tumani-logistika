@@ -104,8 +104,9 @@ export default function MapComponent() {
   const [optimalCenter, setOptimalCenter] = useState<[number, number] | null>(null);
 
   // States for Economic Scenarios
-  const [fuelPrice, setFuelPrice] = useState<number>(8000); // 8000 so'm/litr
-  const [outsourcingPrice, setOutsourcingPrice] = useState<number>(5000); // 5000 so'm/km
+  const [fuelType, setFuelType] = useState<'metan' | 'propan' | 'benzin' | 'zil'>('metan');
+  const [fuelPrice, setFuelPrice] = useState<number>(5000); 
+  const [yandexTariff, setYandexTariff] = useState<'start' | 'komfort'>('start');
   const [activeScenario, setActiveScenario] = useState<'A' | 'B' | 'C'>('A');
   const [optimizedRouteDistance, setOptimizedRouteDistance] = useState<number | null>(null);
 
@@ -936,7 +937,7 @@ export default function MapComponent() {
       <MapContainer 
         center={center} 
         zoom={12} 
-        className="w-full h-screen z-0 print:h-[400px] print:w-full print:border-2 print:border-slate-800 print:rounded-xl print:mb-8"
+        className="w-full h-screen z-0 print:hidden"
         ref={mapRef}
       >
         <TileLayer
@@ -1200,7 +1201,7 @@ export default function MapComponent() {
 
         {/* Economist / Analytics Panel */}
         {routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[80vh] md:max-h-none h-auto">
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[55vh] md:max-h-[calc(100vh-120px)] overscroll-contain block">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
                 <Activity className="w-5 h-5 text-indigo-600" />
@@ -1218,8 +1219,8 @@ export default function MapComponent() {
             {/* Ssenariy Tanlash */}
             <div className="bg-slate-100 p-1 flex items-center rounded-xl mb-4">
                <button onClick={() => setActiveScenario('A')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'A' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>A (O'zimiz)</button>
-               <button onClick={() => setActiveScenario('B')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'B' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>B (Xususiy)</button>
-               <button onClick={() => setActiveScenario('C')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'C' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>C (Ekonom)</button>
+               <button onClick={() => setActiveScenario('B')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'B' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>B (Yandex)</button>
+               <button onClick={() => setActiveScenario('C')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'C' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>C (Optimizatsiya)</button>
             </div>
             
             <div className="grid grid-cols-2 gap-3 mb-4">
@@ -1246,72 +1247,132 @@ export default function MapComponent() {
             {/* Input params based on scenario */}
             <div className="mb-4">
               {activeScenario === 'A' && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Yoqilg'i narxi (1L):</span>
-                  <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={fuelPrice} onChange={e => setFuelPrice(Number(e.target.value))} />
-                  <span className="text-xs font-bold text-slate-500">so'm</span>
+                <div className="space-y-2">
+                  <div className="flex flex-col space-y-1">
+                    <span className="text-xs font-bold text-slate-500">Yoqilg'i turi:</span>
+                    <select 
+                      className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400"
+                      value={fuelType}
+                      onChange={(e) => {
+                        const type = e.target.value as any;
+                        setFuelType(type);
+                        if (type === 'metan') setFuelPrice(5000);
+                        if (type === 'propan') setFuelPrice(5600);
+                        if (type === 'benzin') setFuelPrice(11000);
+                        if (type === 'zil') setFuelPrice(11000);
+                      }}
+                    >
+                      <option value="metan">Metan (7.1 kub/100km)</option>
+                      <option value="propan">Propan (11.1 L/100km)</option>
+                      <option value="benzin">Benzin (12 L/100km)</option>
+                      <option value="zil">ZIL/Yuk mashinasi (25 L/100km)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Narxi (1 {fuelType === 'metan' ? 'kub' : 'litr'}):</span>
+                    <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-2 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={fuelPrice} onChange={e => setFuelPrice(Number(e.target.value))} />
+                    <span className="text-xs font-bold text-slate-500">so'm</span>
+                  </div>
                 </div>
               )}
               {activeScenario === 'B' && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Xizmat haqi (1km):</span>
-                  <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={outsourcingPrice} onChange={e => setOutsourcingPrice(Number(e.target.value))} />
-                  <span className="text-xs font-bold text-slate-500">so'm</span>
-                </div>
-              )}
-              {activeScenario === 'C' && (
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Yoqilg'i narxi (1L):</span>
-                  <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={fuelPrice} onChange={e => setFuelPrice(Number(e.target.value))} />
-                  <span className="text-xs font-bold text-slate-500">so'm</span>
+                <div className="space-y-2">
+                  <div className="flex flex-col space-y-1">
+                    <span className="text-xs font-bold text-slate-500">Yandex Taxi Ta'rifi:</span>
+                    <select 
+                      className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400"
+                      value={yandexTariff}
+                      onChange={(e) => setYandexTariff(e.target.value as any)}
+                    >
+                      <option value="start">Yandex Start (2000 so'm/km)</option>
+                      <option value="komfort">Yandex Komfort (4000 so'm/km)</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
 
             {/* Result Box */}
-            <div className="p-4 bg-slate-900 text-white rounded-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
-              
-              <div className="relative z-10 space-y-3">
-                  <div className="flex justify-between items-center pb-3 border-b border-white/10">
+            {activeScenario !== 'B' && activeScenario !== 'C' && (
+              <div className="p-4 bg-slate-900 text-white rounded-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
+                
+                <div className="relative z-10 space-y-3">
+                    <div className="flex justify-between items-center pb-3 border-b border-white/10">
+                      <div>
+                        <div className="flex items-center space-x-2 mb-0.5 text-slate-400">
+                          <Fuel className="w-3.5 h-3.5" />
+                          <span className="text-[10px] font-semibold uppercase tracking-wider">Yoqilg'i Sarfi</span>
+                        </div>
+                        <div className="text-slate-400 text-[9px] leading-tight max-w-[120px]">
+                          Norma ({fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25} {fuelType === 'metan' ? 'kub' : 'litr'}/100km)
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xl font-black text-white leading-none">
+                          {(() => {
+                             const distKm = routeStats.distance / 1000;
+                             const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
+                             return ((distKm / 100) * consumption).toFixed(1);
+                          })()}
+                        </div>
+                        <div className="text-[10px] font-bold text-indigo-300">{fuelType === 'metan' ? 'kub' : 'litr'}</div>
+                      </div>
+                    </div>
+                    
                     <div>
-                      <div className="flex items-center space-x-2 mb-0.5 text-slate-400">
-                        <Fuel className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wider">Yoqilg'i Sarfi</span>
+                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                        Davlat Byudjetidan Jami Xarajat
                       </div>
-                      <div className="text-slate-400 text-[9px] leading-tight max-w-[120px]">
-                        Norma (25L / 100km)
+                      <div className="flex items-end space-x-1.5">
+                         <span className="text-2xl font-black text-emerald-400 leading-none">
+                           {(() => {
+                              const distKm = routeStats.distance / 1000;
+                              const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
+                              const amount = (distKm / 100) * consumption;
+                              return Math.round(amount * fuelPrice).toLocaleString();
+                           })()}
+                         </span>
+                         <span className="text-xs font-bold text-emerald-500 mb-0.5">so'm</span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xl font-black text-white leading-none">
-                        {(( (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000) / 100 * 25).toFixed(1)}
-                      </div>
-                      <div className="text-[10px] font-bold text-indigo-300">litr</div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-                      {activeScenario === 'B' ? "Autsorsing Jami Xarajati" : "Davlat Byudjetidan Jami Xarajat"}
-                    </div>
-                    <div className="flex items-end space-x-1.5">
-                       <span className="text-2xl font-black text-emerald-400 leading-none">
-                         {(() => {
-                            const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
-                            if (activeScenario === 'A' || activeScenario === 'C') {
-                               const liters = (distKm / 100) * 25;
-                               return Math.round(liters * fuelPrice).toLocaleString();
-                            } else {
-                               return Math.round(distKm * outsourcingPrice).toLocaleString();
-                            }
-                         })()}
-                       </span>
-                       <span className="text-xs font-bold text-emerald-500 mb-0.5">so'm</span>
-                    </div>
-                  </div>
+                </div>
               </div>
-            </div>
+            )}
+
+            {activeScenario === 'C' && (
+              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl relative overflow-hidden text-center">
+                 <div className="flex justify-center mb-2 text-emerald-500">
+                    <Sparkles className="w-8 h-8" />
+                 </div>
+                 <h4 className="font-extrabold text-slate-800 mb-1">Optimizatsiya Samaradorligi</h4>
+                 <p className="text-xs font-medium text-slate-600 mb-3">
+                   Agar marshrut optimallashtirilsa, siz umumiy hisobda oddiy yurishga nisbatan qancha masofa tejar edingiz:
+                 </p>
+                 <div className="inline-flex flex-col items-center justify-center bg-white px-4 py-2 rounded-xl border border-emerald-100 shadow-sm">
+                   <div className="text-2xl font-black text-emerald-600">
+                     {optimizedRouteDistance ? Math.max(0, ((routeStats.distance - optimizedRouteDistance) / 1000)).toFixed(1) : "0.0"} <span className="text-sm font-semibold text-emerald-400">km</span>
+                   </div>
+                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Sof tejam</div>
+                 </div>
+              </div>
+            )}
+
+            {activeScenario === 'B' && routeGeometry && routeGeometry.length > 0 && (
+              <div className="mt-2 text-center rounded-2xl overflow-hidden border border-slate-200">
+                <div className="bg-slate-100 px-3 py-2 flex justify-between items-center border-b border-slate-200">
+                   <span className="text-xs font-bold text-slate-600">Yandex Go ({yandexTariff === 'start' ? 'Start' : 'Komfort'})</span>
+                   <span className="text-xs font-black text-indigo-600">
+                      {(() => {
+                          const distKm = routeStats.distance / 1000;
+                          const base = yandexTariff === 'start' ? 4000 : 6000;
+                          const perKm = yandexTariff === 'start' ? 2000 : 4000;
+                          return Math.round(base + (distKm * perKm)).toLocaleString() + " so'm";
+                      })()}
+                   </span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1343,11 +1404,18 @@ export default function MapComponent() {
           <div className="flex justify-between items-start mb-6 font-bold text-sm">
             <div>
               <p>Optimizatsiya rejimi: <span className="font-normal text-slate-700">{activeScenario === 'C' ? "Yoqilgan" : "O'chirilgan"}</span></p>
-              <p>Moliya ssenariysi: <span className="font-normal text-slate-700">{activeScenario === 'A' ? "A (Davlat avtomobillari)" : activeScenario === 'B' ? "B (Autsorsing)" : "C (Ekonom rejim)"}</span></p>
+              <p>Moliya ssenariysi: <span className="font-normal text-slate-700">{activeScenario === 'A' ? "A (Davlat avtomobillari)" : activeScenario === 'B' ? "B (Autsorsing/Yandex)" : "C (Optimizatsiya tejami)"}</span></p>
             </div>
             <div className="text-right">
-              <p>Yoqilg'i narxi: <span className="font-normal text-slate-700">{fuelPrice} so'm/litr</span></p>
-              <p>Autsors narxi: <span className="font-normal text-slate-700">{outsourcingPrice} so'm/km</span></p>
+              {activeScenario === 'A' && (
+                <>
+                  <p>Yoqilg'i turi: <span className="font-normal text-slate-700">{fuelType.toUpperCase()} ({fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25} {fuelType === 'metan' ? 'kub' : 'litr'}/100km)</span></p>
+                  <p>Yoqilg'i narxi: <span className="font-normal text-slate-700">{fuelPrice} so'm/{fuelType === 'metan' ? 'kub' : 'litr'}</span></p>
+                </>
+              )}
+              {activeScenario === 'B' && (
+                <p>Yandex Ta'rifi: <span className="font-normal text-slate-700">{yandexTariff === 'start' ? 'Start' : 'Komfort'}</span></p>
+              )}
             </div>
           </div>
 
@@ -1364,9 +1432,7 @@ export default function MapComponent() {
                 <tr key={loc.id}>
                   <td className="border border-slate-800 py-1.5 px-3 text-center">{i + 1}</td>
                   <td className="border border-slate-800 py-1.5 px-3 font-medium">{loc.name}</td>
-                  <td className="border border-slate-800 py-1.5 px-3">
-                     {loc.type === 'maktab' ? 'Maktab' : loc.type === 'bogcha' || loc.type === 'dmtt' ? "Bog'cha" : "Boshqa"}
-                  </td>
+                  <td className="border border-slate-800 py-1.5 px-3 uppercase text-[10px] text-slate-600">{loc.type}</td>
                 </tr>
               ))}
             </tbody>
@@ -1377,12 +1443,16 @@ export default function MapComponent() {
             
             <div className="flex justify-between items-center mb-3 text-base">
               <span className="font-bold">Jami marshrut uzunligi:</span>
-              <span className="font-semibold">{(((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} km</span>
+              <span className="font-semibold">{((activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} km</span>
             </div>
-            {activeScenario !== 'B' && (
+            {activeScenario === 'A' && (
               <div className="flex justify-between items-center mb-3 text-base">
-                <span className="font-bold">Taxminiy yoqilg'i sarfi:</span>
-                <span className="font-semibold">{((((activeScenario === 'C' && optimizedRouteDistance) ? optimizedRouteDistance : routeStats.distance) / 1000) / 100 * 25).toFixed(1)} litr</span>
+                <span className="font-bold">Taxminiy yoqilg'i sarfi ({fuelType === 'metan' ? 'kub' : 'litr'}):</span>
+                <span className="font-semibold">{(() => {
+                    const distKm = routeStats.distance / 1000;
+                    const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
+                    return ((distKm / 100) * consumption).toFixed(1);
+                 })()} {fuelType === 'metan' ? 'kub' : 'litr'}</span>
               </div>
             )}
             <div className="flex justify-between items-center mt-6 pt-4 border-t-2 border-slate-900 font-black text-2xl">
@@ -1390,13 +1460,18 @@ export default function MapComponent() {
               <span>
                {(() => {
                   const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
-                  if (activeScenario === 'A' || activeScenario === 'C') {
-                     const liters = (distKm / 100) * 25;
-                     return Math.round(liters * fuelPrice).toLocaleString();
+                  if (activeScenario === 'A') {
+                     const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
+                     const amount = (distKm / 100) * consumption;
+                     return Math.round(amount * fuelPrice).toLocaleString() + " so'm";
+                  } else if (activeScenario === 'B') {
+                     const base = yandexTariff === 'start' ? 4000 : 6000;
+                     const perKm = yandexTariff === 'start' ? 2000 : 4000;
+                     return Math.round(base + (distKm * perKm)).toLocaleString() + " so'm";
                   } else {
-                     return Math.round(distKm * outsourcingPrice).toLocaleString();
+                     return "Optimizatsiya tejami tanlangan";
                   }
-               })()} so'm
+               })()}
               </span>
             </div>
           </div>

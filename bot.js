@@ -109,19 +109,25 @@ if (process.env.RENDER) {
           model: "gemini-3-flash-preview",
           contents: userText,
           config: {
-            systemInstruction: "Siz Bulung'ur MMTB logistika botisiz. Foydalanuvchi qaysi maktab yoki bog'chalarni izlayotganini aniqlang.",
+            systemInstruction: "Siz Bulung'ur MMTB logistika botisiz. Qaysi ob'ekt(lar) qidirilayotganini aniqlab, ularning nomi/raqami va turini qaytaring. Masalan: '15 maktab va 3 bog'cha' desa [{query: '15', type: 'maktab'}, {query: '3', type: 'dmtt'}]. 'Bog'cha', 'DMTT', 'MTT' barchasi 'dmtt' hisoblanadi. Agar nomi yoki turi aniq bo'lmasa, uni qanday yozgan bo'lsa shundayligicha bering.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
               properties: {
                 searchTargets: {
                   type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: "Agar foydalanuvchi obyekt izlayotgan bo'lsa (masalan: '15-maktab va 3-bog\\'cha'), izlanishi kerak bo'lgan so'zlarni qaytaring (masalan ['15', '3-']). Aks holda bo'sh ro'yxat qaytaring."
+                  items: { 
+                     type: Type.OBJECT,
+                     properties: {
+                         query: { type: Type.STRING, description: "Qidirilayotgan obyekt raqami yoki asosiy nomi (masalan: '15')" },
+                         type: { type: Type.STRING, description: "Obyekt turi: 'maktab', 'dmtt' yoki 'barchasi'" }
+                     }
+                  },
+                  description: "Qidirilayotgan obyektlar."
                 },
                 replyMessage: {
                   type: Type.STRING,
-                  description: "Agar manzil izlanmagan bo'lsa yoki shunchaki suhbatlashayotgan/savol bergan bo'lsa, o'zbek tilida muloyim qisqa javob qaytaring (Chatbot rejimi)."
+                  description: "Agar u qandaydir savol yoki salomlashish bo'lsayu ob'ekt qidirmayotgan bo'lsa, javob xati."
                 }
               }
             }
@@ -132,7 +138,7 @@ if (process.env.RENDER) {
         const result = JSON.parse(responseText);
 
         if (result.searchTargets && result.searchTargets.length > 0) {
-            ctx.reply("Manzillar izlanmoqda va marshrut hisoblanmoqda... Kuting.");
+            await ctx.reply("Sizning harakatingizdan kelib chiqib, hozirgi joylashuvingizdan marshrut belgilanadi. Yandex Maps tugmasini bossangiz, marshrut ochiladi.\n\n⏳ Manzillar izlanmoqda va marshrut hisoblanmoqda... Kuting.");
             const querySnapshot = await getDocs(collection(db, 'locations'));
             const allLocations = [];
             
@@ -141,15 +147,23 @@ if (process.env.RENDER) {
               if (data.name && data.lat && data.lng) allLocations.push({ id: doc.id, ...data });
             });
             
-            // Custom file logic removed
-            
             // Collect all matched locations
             const matchedLocations = [];
             const matchedIds = new Set();
 
             for (const target of result.searchTargets) {
-                const queryStr = target.toLowerCase().trim();
-                const found = allLocations.filter(loc => loc.name.toLowerCase().includes(queryStr));
+                const queryStr = (target.query || target).toString().toLowerCase().trim();
+                const typeStr = (target.type || "").toLowerCase().trim();
+                
+                const found = allLocations.filter(loc => {
+                    const matchName = loc.name.toLowerCase().includes(queryStr);
+                    if (!matchName) return false;
+                    
+                    if (typeStr === 'maktab') return loc.type === 'maktab';
+                    if (typeStr === 'dmtt' || typeStr.includes('bog')) return loc.type === 'dmtt';
+                    return true;
+                });
+                
                 for (const loc of found) {
                     if (!matchedIds.has(loc.id)) {
                         matchedLocations.push(loc);
@@ -159,7 +173,7 @@ if (process.env.RENDER) {
             }
 
             if (matchedLocations.length === 0) {
-                ctx.reply(`Afsuski, ${result.searchTargets.join(', ')} bo'yicha hech narsa topilmadi.`);
+                await ctx.reply(`Afsuski, so'rov bo'yicha hech narsa topilmadi.`);
                 return;
             }
 
@@ -228,15 +242,15 @@ if (process.env.RENDER) {
                 }
             }
         } else if (result.replyMessage) {
-            ctx.reply(result.replyMessage);
+            await ctx.reply(result.replyMessage);
         } else {
-            ctx.reply("Kechirasiz, so'rovingizni tushuna olmadim.");
+            await ctx.reply("Kechirasiz, so'rovingizni tushuna olmadim.");
         }
 
     } catch (err) {
         console.error("AI bilan ishlashda xatolik:", err);
         // Fallback
-        ctx.reply("Sizning so'rovingizni qayta ishlashda xatolik yuz berdi. Iltimos keyinroq urinib ko'ring yoki faqat obyekt raqamini yozing.");
+        await ctx.reply("Sizning so'rovingizni qayta ishlashda xatolik yuz berdi. Iltimos keyinroq urinib ko'ring yoki faqat obyekt raqamini yozing.");
     }
   });
 
