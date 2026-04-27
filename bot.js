@@ -1,3 +1,4 @@
+import express from 'express';
 import { Telegraf } from 'telegraf';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
@@ -6,6 +7,17 @@ import fs from 'fs';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
+
+const appServer = express();
+const port = process.env.PORT || 10000;
+
+appServer.get('/', (req, res) => {
+  res.send('Bot is running and healthy!');
+});
+
+appServer.listen(port, '0.0.0.0', () => {
+  console.log(`✅ Web server ${port} portda muvaffaqiyatli ishga tushdi!`);
+});
 
 if (process.env.RENDER) {
   // Read Firebase config
@@ -31,18 +43,15 @@ if (process.env.RENDER) {
   bot.command('stat', async (ctx) => {
     try {
       const querySnapshot = await getDocs(collection(db, 'locations'));
-      let total = 0;
-      let maktablar = 0;
-      let bogchalar = 0;
+      const docs = [];
+      querySnapshot.forEach((doc) => docs.push(doc.data()));
       
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        total++;
-        if (data.type === 'maktab') maktablar++;
-        else if (data.type === 'dmtt' || data.type === 'bogcha') bogchalar++;
-      });
+      const total = docs.length;
+      const maktablar = docs.filter(doc => doc.type === 'maktab').length;
+      const bogchalar = docs.filter(doc => doc.type === 'dmtt').length;
+      const boshqa = docs.filter(doc => doc.type !== 'maktab' && doc.type !== 'dmtt').length;
       
-      ctx.reply(`📊 *Bulung'ur MMTB Bazasi holati:*\n\nJami ob'ektlar soni: ${total} ta\nShundan maktablar: ${maktablar} ta\nBog'chalar: ${bogchalar} ta`, { parse_mode: 'Markdown' });
+      ctx.reply(`📊 *Bulung'ur MMTB Bazasi holati:*\n\nJami ob'ektlar soni: ${total} ta\nShundan maktablar: ${maktablar} ta\nBog'chalar (DMTT): ${bogchalar} ta\nBoshqa tashkilotlar: ${boshqa} ta`, { parse_mode: 'Markdown' });
     } catch (error) {
       console.error("Statistika xatoligi:", error);
       ctx.reply("Statistikani olishda xatolik yuz berdi.");
