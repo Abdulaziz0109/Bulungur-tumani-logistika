@@ -27,7 +27,7 @@ service cloud.firestore {
       // E.g., showing where public schools and kindergartens are.
       allow read: if isValidId(locationId);
       allow list: if true; // Public list query for the map
-      allow create: if isSignedIn() && isValidId(locationId) && isValidLocation(incoming());
+      allow create: if isSignedIn() && isValidLocation(incoming());
       allow update: if isSignedIn() && isValidId(locationId) && isValidLocation(incoming()) && (
         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'lat', 'lng'])
       );

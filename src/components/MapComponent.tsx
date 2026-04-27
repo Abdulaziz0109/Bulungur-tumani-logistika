@@ -5,7 +5,6 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { seedLocations } from '../data/seedLocations';
 import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -439,20 +438,6 @@ export default function MapComponent() {
         id: doc.id,
         ...doc.data()
       })) as Location[];
-
-      const localLocs = seedLocations
-        .filter(loc => loc.lat !== null && loc.lng !== null)
-        .map((loc, idx) => ({
-             id: `seed-${idx}`,
-             name: loc.name,
-             type: loc.type,
-             lat: loc.lat as number,
-             lng: loc.lng as number,
-        }));
-        
-      // Combine local fallback data with Firestore data
-      // This prevents the map from emptying out when a few items are added to Firestore
-      locs = [...localLocs, ...locs];
 
       setLocations(locs);
     } catch (error) {

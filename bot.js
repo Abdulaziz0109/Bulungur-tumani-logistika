@@ -46,10 +46,12 @@ if (process.env.RENDER) {
       const docs = [];
       querySnapshot.forEach((doc) => docs.push(doc.data()));
       
-      const total = docs.length;
-      const maktablar = docs.filter(doc => doc.type === 'maktab').length;
-      const bogchalar = docs.filter(doc => doc.type === 'dmtt').length;
-      const boshqa = docs.filter(doc => doc.type !== 'maktab' && doc.type !== 'dmtt').length;
+      const allDocs = [...docs];
+      
+      const total = allDocs.length;
+      const maktablar = allDocs.filter(doc => doc.type === 'maktab').length;
+      const bogchalar = allDocs.filter(doc => doc.type === 'dmtt' || doc.type === 'bogcha').length;
+      const boshqa = allDocs.filter(doc => doc.type !== 'maktab' && doc.type !== 'dmtt' && doc.type !== 'bogcha').length;
       
       ctx.reply(`📊 *Bulung'ur MMTB Bazasi holati:*\n\nJami ob'ektlar soni: ${total} ta\nShundan maktablar: ${maktablar} ta\nBog'chalar (DMTT): ${bogchalar} ta\nBoshqa tashkilotlar: ${boshqa} ta`, { parse_mode: 'Markdown' });
     } catch (error) {
@@ -138,6 +140,8 @@ if (process.env.RENDER) {
               const data = doc.data();
               if (data.name && data.lat && data.lng) allLocations.push({ id: doc.id, ...data });
             });
+            
+            // Custom file logic removed
             
             // Collect all matched locations
             const matchedLocations = [];
