@@ -6,7 +6,7 @@ import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { seedLocations } from '../data/seedLocations';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -94,6 +94,7 @@ export default function MapComponent() {
   const [searchResults, setSearchResults] = useState<Location[]>([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
 
   // States for Radius Analysis
   const [isRadiusMode, setIsRadiusMode] = useState(false);
@@ -228,6 +229,56 @@ export default function MapComponent() {
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const handleGetLocation = () => {
+    if (!navigator.geolocation) {
+      showToast('Brauzeringizda GPS qo\'llab-quvvatlanmaydi.', 'error');
+      return;
+    }
+    
+    // Set a loading toast if needed, or simply let the browser ask for permission
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        setUserLocation([lat, lng]);
+        
+        if (mapRef.current) {
+          mapRef.current.flyTo([lat, lng], 14, { duration: 1.5 });
+        }
+        
+        // Add to selectedLocations at the start
+        const gpsLocation: Location = {
+          id: 'user-gps-location',
+          name: '📍 Mening joylashuvim (Start)',
+          type: 'boshqa',
+          lat: lat,
+          lng: lng
+        };
+        
+        setSelectedLocations(prev => {
+          // Remove if it already exists, then prepend to start
+          const filtered = prev.filter(loc => loc.id !== 'user-gps-location');
+          return [gpsLocation, ...filtered];
+        });
+        
+        showToast("📍 Joylashuvingiz aniqlandi va marshrut boshiga qo'shildi.", 'success');
+      },
+      (error) => {
+        console.error("GPS Error:", error);
+        if (error.code === error.PERMISSION_DENIED) {
+           showToast('Joylashuvni aniqlashga ruxsat berilmadi.', 'error');
+        } else {
+           showToast('Joylashuvni aniqlashda xatolik yuz berdi.', 'error');
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
   };
 
   const handleAddLocation = async (e: React.FormEvent) => {
@@ -639,6 +690,17 @@ export default function MapComponent() {
         </button>
       )}
 
+      {/* GPS Button */}
+      <button
+        onClick={handleGetLocation}
+        className={`print:hidden absolute ${(!isPickingLocation && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group`}
+      >
+        <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
+          <LocateFixed className="w-4 h-4 text-blue-600" />
+        </div>
+        <span className="font-bold text-sm tracking-tight text-slate-700 group-hover:text-slate-900">Mening joylashuvim</span>
+      </button>
+
       {/* Modal - Add Location */}
       {isAddModalOpen && currentUser && (
         <div 
@@ -933,6 +995,28 @@ export default function MapComponent() {
             </Popup>
           </Marker>
         )}
+
+        {/* User GPS Location Marker */}
+        {userLocation && (
+          <Marker 
+            position={userLocation}
+            icon={L.divIcon({
+              className: 'pulsing-gps-marker',
+              html: `
+                <div style="position: relative; width: 24px; height: 24px; pointer-events: none;">
+                  <div style="position: absolute; inset: 0; background-color: #3b82f6; border-radius: 50%; opacity: 0.4; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+                  <div style="position: absolute; inset: 4px; background-color: #2563eb; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>
+                </div>
+              `,
+              iconSize: [24, 24],
+              iconAnchor: [12, 12]
+            })}
+          >
+            <Popup>
+              <div className="font-sans font-bold text-blue-700">📍 Siz shu yerdasiz</div>
+            </Popup>
+          </Marker>
+        )}
         
         {filteredLocations.map((loc) => (
           <Marker 
@@ -1022,7 +1106,7 @@ export default function MapComponent() {
       )}
 
       {/* Sidebar: Marshrut va Logistika */}
-      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'}`}>
+      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 md:left-auto left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'}`}>
         
         {/* Selected Locations Panel */}
         <div className="flex-1 pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-t-3xl md:rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden max-h-[70vh] md:max-h-none h-full">
