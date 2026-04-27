@@ -693,12 +693,10 @@ export default function MapComponent() {
       {/* GPS Button */}
       <button
         onClick={handleGetLocation}
-        className={`print:hidden absolute ${(!isPickingLocation && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group`}
+        title="Mening joylashuvim"
+        className={`print:hidden absolute ${(!isPickingLocation && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 p-2.5 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group`}
       >
-        <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
-          <LocateFixed className="w-4 h-4 text-blue-600" />
-        </div>
-        <span className="font-bold text-sm tracking-tight text-slate-700 group-hover:text-slate-900">Mening joylashuvim</span>
+        <MapPin className="w-5 h-5 md:w-6 md:h-6 text-blue-600 group-hover:text-blue-700 transition-colors" />
       </button>
 
       {/* Modal - Add Location */}
@@ -1001,15 +999,18 @@ export default function MapComponent() {
           <Marker 
             position={userLocation}
             icon={L.divIcon({
-              className: 'pulsing-gps-marker',
+              className: 'pulsing-gps-marker bg-transparent border-0',
               html: `
-                <div style="position: relative; width: 24px; height: 24px; pointer-events: none;">
-                  <div style="position: absolute; inset: 0; background-color: #3b82f6; border-radius: 50%; opacity: 0.4; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
-                  <div style="position: absolute; inset: 4px; background-color: #2563eb; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>
+                <div style="position: relative; width: 34px; height: 42px; pointer-events: none;">
+                  <div class="animate-ping" style="position: absolute; top: 0; left: 0; width: 34px; height: 34px; background-color: #3b82f6; border-radius: 50%; opacity: 0.7;"></div>
+                  <div style="background-color: #3b82f6; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative; z-index: 10;">
+                    🙋‍♂️
+                    <div style="position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #3b82f6;"></div>
+                  </div>
                 </div>
               `,
-              iconSize: [24, 24],
-              iconAnchor: [12, 12]
+              iconSize: [34, 42],
+              iconAnchor: [17, 40]
             })}
           >
             <Popup>

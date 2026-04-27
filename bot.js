@@ -17,7 +17,12 @@ if (process.env.RENDER) {
   const db = getFirestore(app, config.firestoreDatabaseId);
 
   const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  let ai = null;
+  if (process.env.GEMINI_API_KEY) {
+      ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  } else {
+      console.warn("DIQQAT: GEMINI_API_KEY topilmadi. AI funksiyalari (matnni ishlash) ishlamaydi yoki xatolik berishi mumkin.");
+  }
 
   bot.start((ctx) => {
     ctx.reply('Assalomu alaykum! Men Bulung\'ur MMTB Logistika yordamchisiman. Menga istalgancha yozishingiz mumkin (Masalan: "15-maktab va 3-bog\'cha qayerda?").\n\nQo\'shimcha komandalar:\n/stat - Tuman statistikasi\n/report - Rasmli hisobot yuborish');
@@ -223,13 +228,13 @@ if (process.env.RENDER) {
   });
 
   bot.launch({ dropPendingUpdates: true })
-    .then(() => console.log('Bot ishga tushdi!'))
-    .catch((err) => console.error('Bot ishga tushishida xato:', err));
+    .then(() => console.log('✅ Bot FAQAT Render muhitida ishga tushdi!'))
+    .catch((err) => console.error('Bot xatosi:', err));
 
   // Enable graceful stop
   process.once('SIGINT', () => bot.stop('SIGINT'));
   process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 } else {
-  console.log('Lokal muhitda bot ishga tushirilmadi (409 xatosini oldini qilish uchun va Cloud Firestore connection warningsni yoqtirmaslik uchun). Bot quyidagi muhitda ishlaydi: Render.');
+  console.log('🛑 409-xatolikni oldini olish uchun lokal muhitda bot IQTISOD QILINDI (ishga tushirilmadi).');
 }
