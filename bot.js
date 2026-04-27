@@ -230,11 +230,19 @@ bot.on('text', async (ctx) => {
   }
 });
 
-bot.launch().then(() => {
-  console.log("Telegram bot muvaffaqiyatli ishga tushdi!");
-}).catch(err => {
-  console.error("Botni ishga tushirishda xatolik:", err);
-});
+const startBot = async () => {
+  try {
+    await bot.launch({ dropPendingUpdates: true });
+    console.log("Telegram bot muvaffaqiyatli ishga tushdi!");
+  } catch (err) {
+    console.error("Botni ishga tushirishda xatolik:", err);
+    if (err.response && err.response.error_code === 409) {
+      console.log("Boshqa bot instansi aniqlandi (409). 5 soniyadan keyin qayta urinmoqda...");
+      setTimeout(startBot, 5000);
+    }
+  }
+};
+startBot();
 
 // Enable graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
