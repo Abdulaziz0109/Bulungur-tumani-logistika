@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents, Circle, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
@@ -58,6 +58,10 @@ export default function MapComponent() {
   const [loading, setLoading] = useState(true);
   const [selectedLocations, setSelectedLocations] = useState<Location[]>([]);
   const [routeGeometry, setRouteGeometry] = useState<[number, number][] | null>(null);
+  const [multiRouteGeometries, setMultiRouteGeometries] = useState<{coords: [number, number][], color: string}[] | null>(null);
+  const [vehiclesCount, setVehiclesCount] = useState<number>(1);
+  const [isRoundtrip, setIsRoundtrip] = useState<boolean>(false);
+  const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(false);
   const [routeStats, setRouteStats] = useState<{distance: number, duration: number} | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [districtBoundary, setDistrictBoundary] = useState<any>(null);
@@ -94,21 +98,15 @@ export default function MapComponent() {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+  const [isPickingRoutePoint, setIsPickingRoutePoint] = useState(false);
 
   // States for Radius Analysis
   const [isRadiusMode, setIsRadiusMode] = useState(false);
   const [radiusKm, setRadiusKm] = useState<number>(5);
   const [radiusCenter, setRadiusCenter] = useState<[number, number] | null>(null);
 
-  // States for Optimal Center
-  const [optimalCenter, setOptimalCenter] = useState<[number, number] | null>(null);
-
-  // States for Economic Scenarios
-  const [fuelType, setFuelType] = useState<'metan' | 'propan' | 'benzin' | 'zil'>('metan');
-  const [fuelPrice, setFuelPrice] = useState<number>(5000); 
-  const [yandexTariff, setYandexTariff] = useState<'start' | 'komfort'>('start');
-  const [activeScenario, setActiveScenario] = useState<'A' | 'B' | 'C'>('A');
   const [optimizedRouteDistance, setOptimizedRouteDistance] = useState<number | null>(null);
+  const [hideUnselected, setHideUnselected] = useState(false);
 
   const { role, currentUser } = useAuth();
   const navigate = useNavigate();
@@ -187,7 +185,23 @@ export default function MapComponent() {
   function LocationPicker() {
     useMapEvents({
       click(e) {
-        if (isPickingLocation && !isRadiusMode) {
+        if (isPickingRoutePoint) {
+           const customLocation: Location = {
+             id: `custom-${Date.now()}`,
+             name: `📍 Xaritadan belgilangan nuqta`,
+             type: 'boshqa',
+             lat: parseFloat(e.latlng.lat.toFixed(6)),
+             lng: parseFloat(e.latlng.lng.toFixed(6))
+           };
+           setSelectedLocations(prev => {
+             // If we want it to be the start point, maybe we can prepend it?
+             // Or let's just prepend it so it's the start point.
+             return [customLocation, ...prev];
+           });
+           showToast("Xaritadan boshlang'ich nuqta qo'shildi!", "success");
+           setIsPickingRoutePoint(false);
+           return;
+        } else if (isPickingLocation && !isRadiusMode) {
           setNewLocLat(parseFloat(e.latlng.lat.toFixed(6)));
           setNewLocLng(parseFloat(e.latlng.lng.toFixed(6)));
           setIsPickingLocation(false);
@@ -449,6 +463,9 @@ export default function MapComponent() {
   };
 
   const filteredLocations = locations.filter(loc => {
+    if (hideUnselected && selectedLocations.length > 0) {
+      if (!selectedLocations.find(l => l.id === loc.id)) return false;
+    }
     if (loc.type === 'maktab' && !filters.schools) return false;
     if ((loc.type === 'dmtt' || loc.type === 'bogcha') && !filters.kindergartens) return false;
     if (loc.type !== 'maktab' && loc.type !== 'dmtt' && loc.type !== 'bogcha' && !filters.others) return false;
@@ -473,6 +490,7 @@ export default function MapComponent() {
   const calculateRoute = async () => {
     if (selectedLocations.length < 2) return;
     setIsCalculating(true);
+    setMultiRouteGeometries(null);
     try {
       const coords = selectedLocations.map(l => `${l.lng},${l.lat}`).join(';');
       const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
@@ -505,34 +523,164 @@ export default function MapComponent() {
     }
   };
 
+  const kMeansClustering = (locations: Location[], k: number) => {
+    if (k <= 1) return [locations];
+    if (locations.length <= k) return locations.map(l => [l]);
+
+    // Group locations by exact coordinates to keep them together
+    const groupsMap = new Map<string, Location[]>();
+    locations.forEach(loc => {
+      const key = `${loc.lat.toFixed(5)},${loc.lng.toFixed(5)}`;
+      if (!groupsMap.has(key)) groupsMap.set(key, []);
+      groupsMap.get(key)!.push(loc);
+    });
+    
+    const uniqueGroups = Array.from(groupsMap.values());
+    if (uniqueGroups.length <= k) {
+        return uniqueGroups.map(g => g);
+    }
+
+    let centroids = [];
+    let shuffled = [...uniqueGroups].sort(() => 0.5 - Math.random());
+    for (let i = 0; i < k; i++) centroids.push({ lat: shuffled[i][0].lat, lng: shuffled[i][0].lng });
+
+    const targetSize = Math.ceil(locations.length / k);
+    let clusters: Location[][] = Array.from({ length: k }, () => []);
+    
+    let iterations = 0;
+    while (iterations < 50) {
+      clusters = Array.from({ length: k }, () => []);
+      const clusterSizes = new Array(k).fill(0);
+      
+      let distances: {groupIdx: number, clusterIdx: number, dist: number}[] = [];
+      uniqueGroups.forEach((group, gIdx) => {
+          for(let cIdx = 0; cIdx < k; cIdx++) {
+              const dist = Math.pow(group[0].lat - centroids[cIdx].lat, 2) + Math.pow(group[0].lng - centroids[cIdx].lng, 2);
+              distances.push({groupIdx: gIdx, clusterIdx: cIdx, dist});
+          }
+      });
+      
+      distances.sort((a, b) => a.dist - b.dist);
+      const assignedGroups = new Set<number>();
+      
+      for (const d of distances) {
+          if (assignedGroups.has(d.groupIdx)) continue;
+          
+          if (clusterSizes[d.clusterIdx] < targetSize || k === 1) {
+              assignedGroups.add(d.groupIdx);
+              clusters[d.clusterIdx].push(...uniqueGroups[d.groupIdx]);
+              clusterSizes[d.clusterIdx] += uniqueGroups[d.groupIdx].length;
+          }
+      }
+      
+      // Fallback for remaining groups if clusters enforce strictly
+      uniqueGroups.forEach((group, gIdx) => {
+          if (!assignedGroups.has(gIdx)) {
+              let minSize = Infinity;
+              let bestCluster = 0;
+              for(let c=0; c<k; c++) {
+                  if (clusterSizes[c] < minSize) {
+                      minSize = clusterSizes[c];
+                      bestCluster = c;
+                  }
+              }
+              clusters[bestCluster].push(...group);
+              clusterSizes[bestCluster] += group.length;
+          }
+      });
+      
+      let changed = false;
+      for (let i = 0; i < k; i++) {
+        if (clusters[i].length === 0) continue;
+        const newLat = clusters[i].reduce((sum, loc) => sum + loc.lat, 0) / clusters[i].length;
+        const newLng = clusters[i].reduce((sum, loc) => sum + loc.lng, 0) / clusters[i].length;
+        if (Math.abs(newLat - centroids[i].lat) > 0.00001 || Math.abs(newLng - centroids[i].lng) > 0.00001) {
+          changed = true;
+        }
+        centroids[i] = { lat: newLat, lng: newLng };
+      }
+      if (!changed) break;
+      iterations++;
+    }
+    return clusters.filter(c => c.length > 0);
+  };
+
   const calculateOptimizedRoute = async () => {
     if (selectedLocations.length < 2) return;
     setIsCalculating(true);
+    setRouteGeometry(null);
+    setMultiRouteGeometries(null);
     try {
-      const coordsStr = selectedLocations.map(loc => `${loc.lng},${loc.lat}`).join(';');
-      const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}?roundtrip=false&source=first&overview=full&geometries=geojson`);
-      const data = await res.json();
-      
-      if (data.code === 'Ok' && data.trips && data.trips.length > 0) {
-        const trip = data.trips[0];
-        const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
-        setRouteGeometry(routeCoords);
-        
-        setRouteStats({
-          distance: trip.distance,
-          duration: trip.duration
-        });
-        setOptimizedRouteDistance(trip.distance);
+      const tripParams = `?roundtrip=${isRoundtrip}&source=first&overview=full&geometries=geojson`;
 
-        if (data.waypoints) {
-          const reordered = new Array(selectedLocations.length);
-          data.waypoints.forEach((wp: any, i: number) => {
-            reordered[wp.waypoint_index] = selectedLocations[i];
+      if (vehiclesCount <= 1) {
+        const coordsStr = selectedLocations.map(loc => `${loc.lng},${loc.lat}`).join(';');
+        const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}${tripParams}`);
+        const data = await res.json();
+        
+        if (data.code === 'Ok' && data.trips && data.trips.length > 0) {
+          const trip = data.trips[0];
+          const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+          setRouteGeometry(routeCoords);
+          
+          setRouteStats({
+            distance: trip.distance,
+            duration: trip.duration
           });
-          setSelectedLocations(reordered);
+          setOptimizedRouteDistance(trip.distance);
+
+          if (data.waypoints) {
+            const reordered = new Array(selectedLocations.length);
+            data.waypoints.forEach((wp: any, i: number) => {
+              reordered[wp.waypoint_index] = selectedLocations[i];
+            });
+            setSelectedLocations(reordered);
+          }
+        } else {
+          showToast("Optimallashtirilgan yo'nalish topilmadi", "error");
         }
       } else {
-        showToast("Optimallashtirilgan yo'nalish topilmadi", "error");
+        let clusters: Location[][] = [];
+        if (sharedStartPoint) {
+            const depot = selectedLocations[0];
+            const toCluster = selectedLocations.slice(1);
+            if (toCluster.length > 0) {
+                clusters = kMeansClustering(toCluster, vehiclesCount);
+                for (let i = 0; i < clusters.length; i++) {
+                   clusters[i] = [depot, ...clusters[i]];
+                }
+            } else {
+                clusters = [[depot]];
+            }
+        } else {
+            clusters = kMeansClustering(selectedLocations, vehiclesCount);
+        }
+
+        const colors = ['#ec4899', '#8b5cf6', '#10b981', '#f59e0b', '#06b6d4', '#eab308', '#f43f5e', '#6366f1', '#14b8a6', '#84cc16'];
+        let totalDist = 0;
+        let totalDur = 0;
+        const multi = [];
+        
+        for (let i = 0; i < clusters.length; i++) {
+           const cluster = clusters[i];
+           if (cluster.length < 2) continue; 
+           
+           const coordsStr = cluster.map(loc => `${loc.lng},${loc.lat}`).join(';');
+           const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}${tripParams}`);
+           const data = await res.json();
+           
+           if (data.code === 'Ok' && data.trips && data.trips.length > 0) {
+               const trip = data.trips[0];
+               const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+               totalDist += trip.distance;
+               totalDur += trip.duration;
+               multi.push({coords: routeCoords, color: colors[i % colors.length]});
+           }
+        }
+        
+        setMultiRouteGeometries(multi);
+        setRouteStats({ distance: totalDist, duration: totalDur });
+        setOptimizedRouteDistance(totalDist);
       }
     } catch (error) {
        console.error("TSP Xatolik:", error);
@@ -540,18 +688,6 @@ export default function MapComponent() {
     } finally {
       setIsCalculating(false);
     }
-  };
-
-  const handleFindOptimalCenter = () => {
-    if (selectedLocations.length === 0) return;
-    const avgLat = selectedLocations.reduce((sum, loc) => sum + loc.lat, 0) / selectedLocations.length;
-    const avgLng = selectedLocations.reduce((sum, loc) => sum + loc.lng, 0) / selectedLocations.length;
-    setOptimalCenter([avgLat, avgLng]);
-    
-    if (mapRef.current) {
-      mapRef.current.flyTo([avgLat, avgLng], 14, { duration: 1.5 });
-    }
-    showToast("Optimal markaz (kenglik/uzunlik o'rtachasi) hisoblandi", "success");
   };
 
   return (
@@ -652,19 +788,25 @@ export default function MapComponent() {
       )}
 
       {/* Picking Mode Overlay */}
-      {isPickingLocation && (
+      {(isPickingLocation || isPickingRoutePoint) && (
         <div className="print:hidden absolute top-20 md:top-6 left-1/2 transform -translate-x-1/2 z-[400] bg-slate-900 text-white px-4 md:px-6 py-2 md:py-3 rounded-full flex items-center space-x-2 md:space-x-3 shadow-2xl hover:bg-slate-800 transition-colors w-[90%] md:w-auto justify-center">
           <MousePointer2 className="w-4 h-4 md:w-5 md:h-5 text-blue-400 animate-pulse shrink-0" />
           <span className="font-semibold text-xs md:text-sm truncate">Xaritadan joylashuvni chertib tanlang...</span>
           <div className="w-px h-3 md:h-4 bg-slate-700 mx-1 shrink-0"></div>
-          <button onClick={() => { setIsPickingLocation(false); setIsAddModalOpen(true); }} className="text-[10px] md:text-xs text-slate-300 hover:text-white font-bold transition-colors whitespace-nowrap shrink-0">
+          <button onClick={() => { 
+            if (isPickingRoutePoint) {
+               setIsPickingRoutePoint(false);
+            } else {
+               setIsPickingLocation(false); setIsAddModalOpen(true); 
+            }
+          }} className="text-[10px] md:text-xs text-slate-300 hover:text-white font-bold transition-colors whitespace-nowrap shrink-0">
             Bekor qilish
           </button>
         </div>
       )}
 
       {/* Add Location Button */}
-      {!isPickingLocation && currentUser && (
+      {(!isPickingLocation && !isPickingRoutePoint && currentUser) && (
         <button
           onClick={() => setIsAddModalOpen(true)}
           className="print:hidden absolute top-20 md:top-24 left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group"
@@ -677,13 +819,23 @@ export default function MapComponent() {
       )}
 
       {/* GPS Button */}
-      <button
-        onClick={handleGetLocation}
-        title="Mening joylashuvim"
-        className={`print:hidden absolute ${(!isPickingLocation && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 p-2.5 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group`}
-      >
-        <MapPin className="w-5 h-5 md:w-6 md:h-6 text-blue-600 group-hover:text-blue-700 transition-colors" />
-      </button>
+      <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-2`}>
+        <button
+          onClick={handleGetLocation}
+          title="Mening joylashuvim"
+          className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 p-2.5 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group"
+        >
+          <MapPin className="w-5 h-5 md:w-6 md:h-6 text-blue-600 group-hover:text-blue-700 transition-colors" />
+        </button>
+        
+        <button
+          onClick={() => setIsPickingRoutePoint(true)}
+          title="Xaritadan boshlang'ich nuqta belgilash"
+          className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 p-2.5 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group"
+        >
+          <LocateFixed className="w-5 h-5 md:w-6 md:h-6 text-emerald-600 group-hover:text-emerald-700 transition-colors" />
+        </button>
+      </div>
 
       {/* Modal - Add Location */}
       {isAddModalOpen && currentUser && (
@@ -954,32 +1106,6 @@ export default function MapComponent() {
            />
         )}
 
-        {/* Optimal Center Marker */}
-        {optimalCenter && (
-          <Marker 
-            position={optimalCenter}
-            icon={L.divIcon({
-              className: 'custom-optimal-marker',
-              html: `
-                <div style="font-size: 32px; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5)); transform: translate(-16px, -32px); text-align: center;">
-                  🏭
-                  <div style="position: absolute; top: 100%; left: 50%; transform: translateX(-50%); background: white; padding: 4px 8px; border-radius: 6px; border: 2px solid #ca8a04; font-weight: 800; font-size: 11px; color: #854d0e; white-space: nowrap; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: 2px;">
-                    Eng Optimal Joy
-                  </div>
-                </div>
-              `
-            })}
-          >
-            <Popup className="font-sans">
-                <div className="text-center p-2">
-                    <Factory className="w-8 h-8 text-amber-500 mx-auto mb-2" />
-                    <h3 className="font-bold text-slate-900 mb-1">Tavsiya etilgan Baza Markazi</h3>
-                    <p className="text-xs text-slate-500">Kenglik: {optimalCenter[0].toFixed(5)}<br/>Uzunlik: {optimalCenter[1].toFixed(5)}</p>
-                </div>
-            </Popup>
-          </Marker>
-        )}
-
         {/* User GPS Location Marker */}
         {userLocation && (
           <Marker 
@@ -999,9 +1125,9 @@ export default function MapComponent() {
               iconAnchor: [17, 40]
             })}
           >
-            <Popup>
-              <div className="font-sans font-bold text-blue-700">📍 Siz shu yerdasiz</div>
-            </Popup>
+            <Tooltip direction="top" offset={[0, -20]} opacity={0.9} className="border-0 shadow-lg rounded-xl font-sans font-bold text-blue-700 bg-white/90 backdrop-blur-sm px-3 py-2 text-xs">
+              📍 Siz shu yerdasiz
+            </Tooltip>
           </Marker>
         )}
         
@@ -1013,26 +1139,30 @@ export default function MapComponent() {
             eventHandlers={{ click: () => handleMarkerClick(loc) }}
             ref={(el) => { markerRefs.current[loc.id] = el; }}
           >
-            <Popup>
-              <div className="font-sans">
-                <h3 className="font-bold text-lg">{loc.name}</h3>
-                <p className="text-sm text-gray-600 capitalize">Turi: {loc.type === 'dmtt' ? "Maktabgacha ta'lim" : loc.type}</p>
-                <button 
-                  onClick={() => handleMarkerClick(loc)}
-                  className="print:hidden mt-2 w-full px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-colors"
-                >
-                  Marshrutga qo'shish
-                </button>
-                {currentUser && (
+            <Tooltip interactive={true} opacity={0.95} direction="top" offset={[0, -20]} className="border-0 shadow-2xl bg-white/95 backdrop-blur-sm rounded-2xl p-3 max-w-[200px]">
+              <div className="font-sans text-center">
+                <h3 className="font-extrabold text-[13px] text-slate-800 leading-tight mb-1">{loc.name}</h3>
+                <p className="text-[10px] font-medium text-slate-500 capitalize mb-2 bg-slate-100 rounded px-1.5 py-0.5 inline-block">
+                  {loc.type === 'dmtt' ? "Maktabgacha ta'lim" : loc.type}
+                </p>
+                <div className="flex flex-col space-y-1.5 pt-1 border-t border-slate-100">
                   <button 
-                    onClick={() => handleDeleteLocation(loc.id)}
-                    className="print:hidden mt-2 w-full px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-bold rounded-lg transition-colors"
+                    onClick={(e) => { e.stopPropagation(); handleMarkerClick(loc); }}
+                    className="print:hidden w-full px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
                   >
-                    O'chirish
+                    Marshrutga qo'shish
                   </button>
-                )}
+                  {currentUser && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDeleteLocation(loc.id); }}
+                      className="print:hidden w-full px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
+                    >
+                      O'chirish
+                    </button>
+                  )}
+                </div>
               </div>
-            </Popup>
+            </Tooltip>
           </Marker>
         ))}
         {layers.district && districtBoundary && (
@@ -1057,6 +1187,9 @@ export default function MapComponent() {
         {routeGeometry && (
           <Polyline positions={routeGeometry} color="#3b82f6" weight={6} opacity={0.8} />
         )}
+        {multiRouteGeometries && multiRouteGeometries.map((m, idx) => (
+          <Polyline key={idx} positions={m.coords} color={m.color} weight={6} opacity={0.8} />
+        ))}
         <LocationPicker />
       </MapContainer>
       
@@ -1121,80 +1254,95 @@ export default function MapComponent() {
             </div>
           </div>
           
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-slate-200">
+          <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200">
             {selectedLocations.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
-                <MapPin className="w-12 h-12 mb-3 opacity-20" />
+              <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-400">
                 <p className="text-sm">Xaritadan manzillarni tanlang</p>
               </div>
             ) : (
-              selectedLocations.map((loc, idx) => (
-                <div key={loc.id} className="flex items-center space-x-3 p-3 bg-slate-50 border border-slate-200 rounded-2xl shadow-sm relative group">
-                  <div className="w-8 h-8 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
-                    {idx + 1}
+              <div className="flex flex-wrap gap-2">
+                {selectedLocations.map((loc, idx) => (
+                  <div key={loc.id} className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-full shadow-sm relative group cursor-pointer" title={loc.name}>
+                    <div className="w-6 h-6 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0 shadow-sm">
+                      {idx + 1}
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-600 uppercase pr-1">{loc.type === 'dmtt' ? "Bog'cha" : loc.type}</span>
+                    {currentUser && (
+                      <button 
+                        onClick={(e) => removeLocation(e, loc.id)}
+                        className="print:hidden text-slate-400 hover:text-red-500 transition-colors ml-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-bold text-slate-800 truncate">{loc.name}</div>
-                    <div className="text-[10px] text-slate-500 uppercase tracking-widest">{loc.type === 'dmtt' ? "Bog'cha" : loc.type}</div>
-                  </div>
-                  {currentUser && (
-                    <button 
-                      onClick={(e) => removeLocation(e, loc.id)}
-                      className="print:hidden p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </div>
 
-          <div className="print:hidden pt-4 border-t border-slate-100 mt-4 space-y-3">
-            <button 
-              className={`w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all ${
-                selectedLocations.length < 2 
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  : 'bg-slate-900 hover:bg-slate-800 text-white shadow-lg active:scale-95'
-              }`}
-              onClick={calculateRoute}
-              disabled={selectedLocations.length < 2 || isCalculating}
-            >
-               {isCalculating ? (
-                <span className="flex items-center">
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
-                  Hisoblanmoqda...
-                </span>
-              ) : (
-                <span className="flex items-center space-x-2">
-                  <Navigation className="w-4 h-4" />
-                  <span>Marshrutni hisoblash</span>
-                </span>
-              )}
-            </button>
-
-            <button 
-              className={`w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all border ${
-                selectedLocations.length < 3 
-                  ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed' 
-                  : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 shadow-md active:scale-95'
-              }`}
-              onClick={calculateOptimizedRoute}
-              disabled={selectedLocations.length < 3 || isCalculating}
-              title="Eng qisqa, optimal ketma-ketlikni avtomatik topish (TSP)"
-            >
-              <Sparkles className="w-5 h-5" />
-              <span>Aqlli Optimizatsiya (TSP)</span>
-            </button>
-
+          <div className="print:hidden pt-3 border-t border-slate-100 mt-2 space-y-3">
+            {selectedLocations.length > 0 && (
+              <label className="flex items-center space-x-2 text-sm font-semibold text-slate-700 cursor-pointer p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
+                <input 
+                  type="checkbox" 
+                  checked={hideUnselected}
+                  onChange={(e) => setHideUnselected(e.target.checked)}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
+                />
+                <span className="text-xs">Faqat tanlanganlarini xaritada ko'rsatish</span>
+              </label>
+            )}
+            
+            <div className="flex space-x-2">
+              <button 
+                className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all ${
+                  selectedLocations.length < 2 
+                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    : 'bg-slate-900 hover:bg-slate-800 text-white shadow-lg active:scale-95'
+                }`}
+                onClick={calculateOptimizedRoute}
+                disabled={selectedLocations.length < 2 || isCalculating}
+                title="Marshrutni hisoblash"
+              >
+                 {isCalculating ? (
+                    <span className="flex items-center">
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
+                      Hisoblanmoqda...
+                    </span>
+                ) : (
+                    <span className="flex items-center space-x-2">
+                      <Navigation className="w-4 h-4" />
+                      <span>Marshrutni hisoblash</span>
+                    </span>
+                )}
+              </button>
+            </div>
+            
+            {selectedLocations.length > 5 && (
+               <div className="flex flex-col space-y-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">
+                 <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-600">Marshrutlar soni:</span>
+                    <div className="flex items-center shadow-sm rounded-lg overflow-hidden border border-slate-200">
+                      <button onClick={() => setVehiclesCount(Math.max(1, vehiclesCount - 1))} className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-600 font-bold border-r border-slate-200 transition-colors">-</button>
+                      <input type="number" value={vehiclesCount} readOnly className="w-8 text-center text-xs font-black py-1 bg-white text-slate-900 outline-none" />
+                      <button onClick={() => setVehiclesCount(Math.min(10, vehiclesCount + 1))} className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-600 font-bold border-l border-slate-200 transition-colors">+</button>
+                    </div>
+                 </div>
+                 {vehiclesCount > 1 && (
+                   <label className="flex items-center space-x-2 text-[11px] font-semibold text-slate-700 cursor-pointer pt-1 border-t border-slate-200">
+                     <input type="checkbox" checked={sharedStartPoint} onChange={(e) => setSharedStartPoint(e.target.checked)} className="rounded border-slate-300 text-blue-600 w-3 h-3" />
+                     <span>1-chi manzil hamma uchun boshlang'ich bo'lsin</span>
+                   </label>
+                 )}
+               </div>
+            )}
+            
             {selectedLocations.length >= 2 && (
-               <button 
-                className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all border bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200 shadow-md active:scale-95"
-                onClick={handleFindOptimalCenter}
-               >
-                 <Factory className="w-5 h-5" />
-                 <span>Optimal Markazni Topish</span>
-               </button>
+               <label className="flex items-center space-x-2 text-[11px] font-semibold text-slate-700 cursor-pointer p-1.5 hover:bg-slate-50 rounded-xl transition-colors">
+                 <input type="checkbox" checked={isRoundtrip} onChange={(e) => setIsRoundtrip(e.target.checked)} className="rounded border-slate-300 text-blue-600 w-3 h-3" />
+                 <span>Aylanma marshrut (Oxirida boshlang'ichga qaytish)</span>
+               </label>
             )}
           </div>
         </div>
@@ -1204,8 +1352,8 @@ export default function MapComponent() {
           <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[55vh] md:max-h-[calc(100vh-120px)] overscroll-contain block">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
-                <Activity className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Moliyaviy Ssenariylar</h3>
+                <Route className="w-5 h-5 text-indigo-600" />
+                <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Marshrut Ma'lumotlari</h3>
               </div>
               <button 
                 onClick={() => window.print()}
@@ -1215,22 +1363,15 @@ export default function MapComponent() {
                 <Printer className="w-4 h-4" />
               </button>
             </div>
-
-            {/* Ssenariy Tanlash */}
-            <div className="bg-slate-100 p-1 flex items-center rounded-xl mb-4">
-               <button onClick={() => setActiveScenario('A')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'A' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>A (O'zimiz)</button>
-               <button onClick={() => setActiveScenario('B')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'B' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>B (Yandex)</button>
-               <button onClick={() => setActiveScenario('C')} className={`flex-1 text-[11px] font-bold py-1.5 rounded-lg transition-colors ${activeScenario === 'C' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>C (Optimizatsiya)</button>
-            </div>
             
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-2 gap-3">
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="flex items-center space-x-1.5 mb-1 text-blue-600">
                   <MapIcon className="w-3.5 h-3.5" />
                   <span className="text-[9px] font-bold uppercase tracking-wider">Masofa</span>
                 </div>
                 <div className="text-xl font-black text-slate-900 leading-none mt-1">
-                  {((activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} <span className="text-sm font-semibold text-slate-500">km</span>
+                  {(routeStats.distance / 1000).toFixed(1)} <span className="text-sm font-semibold text-slate-500">km</span>
                 </div>
               </div>
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
@@ -1243,136 +1384,6 @@ export default function MapComponent() {
                 </div>
               </div>
             </div>
-
-            {/* Input params based on scenario */}
-            <div className="mb-4">
-              {activeScenario === 'A' && (
-                <div className="space-y-2">
-                  <div className="flex flex-col space-y-1">
-                    <span className="text-xs font-bold text-slate-500">Yoqilg'i turi:</span>
-                    <select 
-                      className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400"
-                      value={fuelType}
-                      onChange={(e) => {
-                        const type = e.target.value as any;
-                        setFuelType(type);
-                        if (type === 'metan') setFuelPrice(5000);
-                        if (type === 'propan') setFuelPrice(5600);
-                        if (type === 'benzin') setFuelPrice(11000);
-                        if (type === 'zil') setFuelPrice(11000);
-                      }}
-                    >
-                      <option value="metan">Metan (7.1 kub/100km)</option>
-                      <option value="propan">Propan (11.1 L/100km)</option>
-                      <option value="benzin">Benzin (12 L/100km)</option>
-                      <option value="zil">ZIL/Yuk mashinasi (25 L/100km)</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Narxi (1 {fuelType === 'metan' ? 'kub' : 'litr'}):</span>
-                    <input type="number" className="flex-1 min-w-0 bg-slate-50 border border-slate-200 px-2 py-2 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400" value={fuelPrice} onChange={e => setFuelPrice(Number(e.target.value))} />
-                    <span className="text-xs font-bold text-slate-500">so'm</span>
-                  </div>
-                </div>
-              )}
-              {activeScenario === 'B' && (
-                <div className="space-y-2">
-                  <div className="flex flex-col space-y-1">
-                    <span className="text-xs font-bold text-slate-500">Yandex Taxi Ta'rifi:</span>
-                    <select 
-                      className="w-full bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg text-xs font-bold text-slate-900 outline-none focus:border-indigo-400"
-                      value={yandexTariff}
-                      onChange={(e) => setYandexTariff(e.target.value as any)}
-                    >
-                      <option value="start">Yandex Start (2000 so'm/km)</option>
-                      <option value="komfort">Yandex Komfort (4000 so'm/km)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Result Box */}
-            {activeScenario !== 'B' && activeScenario !== 'C' && (
-              <div className="p-4 bg-slate-900 text-white rounded-2xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2"></div>
-                
-                <div className="relative z-10 space-y-3">
-                    <div className="flex justify-between items-center pb-3 border-b border-white/10">
-                      <div>
-                        <div className="flex items-center space-x-2 mb-0.5 text-slate-400">
-                          <Fuel className="w-3.5 h-3.5" />
-                          <span className="text-[10px] font-semibold uppercase tracking-wider">Yoqilg'i Sarfi</span>
-                        </div>
-                        <div className="text-slate-400 text-[9px] leading-tight max-w-[120px]">
-                          Norma ({fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25} {fuelType === 'metan' ? 'kub' : 'litr'}/100km)
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xl font-black text-white leading-none">
-                          {(() => {
-                             const distKm = routeStats.distance / 1000;
-                             const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
-                             return ((distKm / 100) * consumption).toFixed(1);
-                          })()}
-                        </div>
-                        <div className="text-[10px] font-bold text-indigo-300">{fuelType === 'metan' ? 'kub' : 'litr'}</div>
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-                        Davlat Byudjetidan Jami Xarajat
-                      </div>
-                      <div className="flex items-end space-x-1.5">
-                         <span className="text-2xl font-black text-emerald-400 leading-none">
-                           {(() => {
-                              const distKm = routeStats.distance / 1000;
-                              const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
-                              const amount = (distKm / 100) * consumption;
-                              return Math.round(amount * fuelPrice).toLocaleString();
-                           })()}
-                         </span>
-                         <span className="text-xs font-bold text-emerald-500 mb-0.5">so'm</span>
-                      </div>
-                    </div>
-                </div>
-              </div>
-            )}
-
-            {activeScenario === 'C' && (
-              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl relative overflow-hidden text-center">
-                 <div className="flex justify-center mb-2 text-emerald-500">
-                    <Sparkles className="w-8 h-8" />
-                 </div>
-                 <h4 className="font-extrabold text-slate-800 mb-1">Optimizatsiya Samaradorligi</h4>
-                 <p className="text-xs font-medium text-slate-600 mb-3">
-                   Agar marshrut optimallashtirilsa, siz umumiy hisobda oddiy yurishga nisbatan qancha masofa tejar edingiz:
-                 </p>
-                 <div className="inline-flex flex-col items-center justify-center bg-white px-4 py-2 rounded-xl border border-emerald-100 shadow-sm">
-                   <div className="text-2xl font-black text-emerald-600">
-                     {optimizedRouteDistance ? Math.max(0, ((routeStats.distance - optimizedRouteDistance) / 1000)).toFixed(1) : "0.0"} <span className="text-sm font-semibold text-emerald-400">km</span>
-                   </div>
-                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Sof tejam</div>
-                 </div>
-              </div>
-            )}
-
-            {activeScenario === 'B' && routeGeometry && routeGeometry.length > 0 && (
-              <div className="mt-2 text-center rounded-2xl overflow-hidden border border-slate-200">
-                <div className="bg-slate-100 px-3 py-2 flex justify-between items-center border-b border-slate-200">
-                   <span className="text-xs font-bold text-slate-600">Yandex Go ({yandexTariff === 'start' ? 'Start' : 'Komfort'})</span>
-                   <span className="text-xs font-black text-indigo-600">
-                      {(() => {
-                          const distKm = routeStats.distance / 1000;
-                          const base = yandexTariff === 'start' ? 4000 : 6000;
-                          const perKm = yandexTariff === 'start' ? 2000 : 4000;
-                          return Math.round(base + (distKm * perKm)).toLocaleString() + " so'm";
-                      })()}
-                   </span>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -1403,19 +1414,10 @@ export default function MapComponent() {
         <div className="hidden print:block mt-8 text-black border-t-2 border-dashed border-slate-300 pt-6 px-4">
           <div className="flex justify-between items-start mb-6 font-bold text-sm">
             <div>
-              <p>Optimizatsiya rejimi: <span className="font-normal text-slate-700">{activeScenario === 'C' ? "Yoqilgan" : "O'chirilgan"}</span></p>
-              <p>Moliya ssenariysi: <span className="font-normal text-slate-700">{activeScenario === 'A' ? "A (Davlat avtomobillari)" : activeScenario === 'B' ? "B (Autsorsing/Yandex)" : "C (Optimizatsiya tejami)"}</span></p>
+              <p>Topshiriq sanasi: <span className="font-normal text-slate-700">{new Date().toLocaleDateString()}</span></p>
             </div>
             <div className="text-right">
-              {activeScenario === 'A' && (
-                <>
-                  <p>Yoqilg'i turi: <span className="font-normal text-slate-700">{fuelType.toUpperCase()} ({fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25} {fuelType === 'metan' ? 'kub' : 'litr'}/100km)</span></p>
-                  <p>Yoqilg'i narxi: <span className="font-normal text-slate-700">{fuelPrice} so'm/{fuelType === 'metan' ? 'kub' : 'litr'}</span></p>
-                </>
-              )}
-              {activeScenario === 'B' && (
-                <p>Yandex Ta'rifi: <span className="font-normal text-slate-700">{yandexTariff === 'start' ? 'Start' : 'Komfort'}</span></p>
-              )}
+              <p>Holati: <span className="font-normal text-slate-700">Tasdiqlandi</span></p>
             </div>
           </div>
 
@@ -1439,40 +1441,18 @@ export default function MapComponent() {
           </table>
 
           <div className="mb-16 border-2 border-slate-900 rounded-xl p-5 bg-slate-50 w-full max-w-2xl mx-auto">
-            <h4 className="font-black border-b-2 border-slate-900 pb-2 mb-4 uppercase text-sm tracking-widest text-center">Tasdiqlangan Xarajatlar Smetasi</h4>
+            <h4 className="font-black border-b-2 border-slate-900 pb-2 mb-4 uppercase text-sm tracking-widest text-center">Tasdiqlangan Marshrut Ma'lumotlari</h4>
             
             <div className="flex justify-between items-center mb-3 text-base">
               <span className="font-bold">Jami marshrut uzunligi:</span>
-              <span className="font-semibold">{((activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000).toFixed(1)} km</span>
+              <span className="font-semibold">{(routeStats.distance / 1000).toFixed(1)} km</span>
             </div>
-            {activeScenario === 'A' && (
-              <div className="flex justify-between items-center mb-3 text-base">
-                <span className="font-bold">Taxminiy yoqilg'i sarfi ({fuelType === 'metan' ? 'kub' : 'litr'}):</span>
-                <span className="font-semibold">{(() => {
-                    const distKm = routeStats.distance / 1000;
-                    const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
-                    return ((distKm / 100) * consumption).toFixed(1);
-                 })()} {fuelType === 'metan' ? 'kub' : 'litr'}</span>
-              </div>
-            )}
-            <div className="flex justify-between items-center mt-6 pt-4 border-t-2 border-slate-900 font-black text-2xl">
-              <span>Tasdiqlangan summa:</span>
-              <span>
-               {(() => {
-                  const distKm = (activeScenario === 'C' && optimizedRouteDistance ? optimizedRouteDistance : routeStats.distance) / 1000;
-                  if (activeScenario === 'A') {
-                     const consumption = fuelType === 'metan' ? 7.1 : fuelType === 'propan' ? 11.1 : fuelType === 'benzin' ? 12 : 25;
-                     const amount = (distKm / 100) * consumption;
-                     return Math.round(amount * fuelPrice).toLocaleString() + " so'm";
-                  } else if (activeScenario === 'B') {
-                     const base = yandexTariff === 'start' ? 4000 : 6000;
-                     const perKm = yandexTariff === 'start' ? 2000 : 4000;
-                     return Math.round(base + (distKm * perKm)).toLocaleString() + " so'm";
-                  } else {
-                     return "Optimizatsiya tejami tanlangan";
-                  }
-               })()}
-              </span>
+            <div className="flex justify-between items-center mb-3 text-base">
+              <span className="font-bold">Taxminiy borish vaqti:</span>
+              <span className="font-semibold">{Math.round(routeStats.duration / 60)} daqiqa</span>
+            </div>
+            <div className="flex justify-between items-center mt-6 pt-4 border-t-2 border-slate-900 font-black text-lg">
+              <span>Tasdiqlandi:</span>
             </div>
           </div>
 
