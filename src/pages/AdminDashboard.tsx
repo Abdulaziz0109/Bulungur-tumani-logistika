@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, setDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, setDoc, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { useNavigate } from 'react-router-dom';
-import { Users, LogOut, Plus, Shield, User, X, Map as MapIcon, ArrowLeft } from 'lucide-react';
+import { Users, LogOut, Plus, Shield, User, X, Map as MapIcon, ArrowLeft, MessageSquare, Check, XCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'users' | 'requests'>('users');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   
@@ -26,7 +28,45 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchUsers();
+    fetchRequests();
   }, []);
+
+  const fetchRequests = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'requests'));
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(r => (r as any).status === 'pending');
+      setRequests(list);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleApprove = async (req: any) => {
+      try {
+          if (req.actionType === 'add') {
+              await setDoc(doc(collection(db, 'locations')), req.data);
+          } else if (req.actionType === 'edit') {
+              await updateDoc(doc(db, 'locations', req.originalId), req.data);
+          }
+          await updateDoc(doc(db, 'requests', req.id), { status: 'approved' });
+          setSuccess("Taklif tasdiqlandi va xaritaga qo'shildi!");
+          fetchRequests();
+      } catch (err: any) {
+          setError(err.message || 'Xatolik yuz berdi');
+      }
+  };
+
+  const handleReject = async (reqId: string) => {
+      if (window.confirm("Bu taklifni rad etasizmi?")) {
+          try {
+              await updateDoc(doc(db, 'requests', reqId), { status: 'rejected' });
+              setSuccess("Taklif rad etildi.");
+              fetchRequests();
+          } catch (err: any) {
+             setError(err.message || 'Xatolik yuz berdi');
+          }
+      }
+  };
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -106,9 +146,24 @@ export default function AdminDashboard() {
         <div className="p-4 flex-1">
           <ul className="space-y-2">
             <li>
-              <button className="w-full flex items-center space-x-3 px-4 py-3 bg-indigo-50 text-indigo-700 rounded-xl font-bold text-sm">
+              <button 
+                onClick={() => setActiveTab('users')}
+                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-bold text-sm transition-colors ${activeTab === 'users' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
                 <Users className="w-5 h-5" />
                 <span>Foydalanuvchilar</span>
+              </button>
+            </li>
+            <li>
+              <button 
+                onClick={() => setActiveTab('requests')}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold text-sm transition-colors ${activeTab === 'requests' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
+                <div className="flex items-center space-x-3">
+                  <MessageSquare className="w-5 h-5" />
+                  <span>Takliflar</span>
+                </div>
+                {requests.length > 0 && (
+                  <span className="bg-red-500 text-white min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[10px] px-1">{requests.length}</span>
+                )}
               </button>
             </li>
             <li>
@@ -140,17 +195,30 @@ export default function AdminDashboard() {
 
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Foydalanuvchilar ro'yxati</h2>
-            <p className="text-slate-500 text-sm mt-1">Tizimga kirish huquqiga ega barcha odamlar</p>
+            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+              {activeTab === 'users' ? "Foydalanuvchilar ro'yxati" : "Xaritadagi o'zgarish takliflari"}
+            </h2>
+            <p className="text-slate-500 text-sm mt-1">
+              {activeTab === 'users' ? "Tizimga kirish huquqiga ega barcha odamlar" : "Foydalanuvchilar tomondan yuborilgan yangi joylashuv yoki tahrirlashlar"}
+            </p>
           </div>
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm flex items-center space-x-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Yangi xodim</span>
-          </button>
+          {activeTab === 'users' && (
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-xl font-bold text-sm flex items-center space-x-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Yangi xodim</span>
+            </button>
+          )}
         </div>
+
+        {error && (
+            <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-xl border border-red-100 text-sm font-bold flex items-center justify-between">
+              {error}
+              <button onClick={() => setError('')}><X className="w-4 h-4"/></button>
+            </div>
+        )}
 
         {success && (
           <div className="mb-6 p-4 bg-green-50 text-green-700 rounded-xl border border-green-100 text-sm font-bold flex items-center justify-between">
@@ -159,8 +227,9 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-          <table className="w-full text-left text-sm text-slate-600">
+        {activeTab === 'users' ? (
+          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+            <table className="w-full text-left text-sm text-slate-600">
             <thead className="bg-slate-50 text-xs uppercase font-bold tracking-widest text-slate-500 border-b border-slate-100">
               <tr>
                 <th className="px-6 py-4">Foydalanuvchi (Email)</th>
@@ -205,6 +274,42 @@ export default function AdminDashboard() {
             </tbody>
           </table>
         </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {requests.map((req) => (
+              <div key={req.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between">
+                 <div>
+                    <div className="flex items-center justify-between mb-4">
+                       <span className={`px-2.5 py-1 text-[10px] uppercase tracking-widest font-extrabold rounded-md ${req.actionType === 'add' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                         {req.actionType === 'add' ? 'Yangi qo\'shish' : 'Tahrirlash'}
+                       </span>
+                       <span className="text-xs text-slate-400 font-medium">Taklif</span>
+                    </div>
+                    <div className="space-y-1 mb-6">
+                       <h3 className="font-extrabold text-slate-900 border-b border-slate-50 pb-2 mb-2">{req.data?.name}</h3>
+                       <p className="text-xs text-slate-500 capitalize"><strong>Turi:</strong> {req.data?.type}</p>
+                       <p className="text-xs text-slate-500 font-mono mt-1 blur-[1px] hover:blur-none transition">
+                          {req.data?.lat}, {req.data?.lng}
+                       </p>
+                    </div>
+                 </div>
+                 <div className="flex space-x-3">
+                    <button onClick={() => handleApprove(req)} className="flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-100 font-bold py-2.5 rounded-xl text-xs transition-colors flex justify-center items-center space-x-1.5">
+                       <Check className="w-4 h-4" /> <span>Tasdiqlash</span>
+                    </button>
+                    <button onClick={() => handleReject(req.id)} className="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-100 font-bold py-2.5 rounded-xl text-xs transition-colors flex justify-center items-center space-x-1.5">
+                       <XCircle className="w-4 h-4" /> <span>Rad etish</span>
+                    </button>
+                 </div>
+              </div>
+            ))}
+            {requests.length === 0 && (
+              <div className="col-span-full py-12 text-center text-slate-500">
+                Hozircha o'zgarishlar tasdiqlash uchun kutilmayapti.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Add User Modal */}

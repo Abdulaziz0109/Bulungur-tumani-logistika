@@ -5,34 +5,37 @@
       "description": "Represents a location marker on the map",
       "type": "object",
       "properties": {
-        "name": {
-          "type": "string",
-          "description": "The name of the location"
-        },
-        "type": {
-          "type": "string",
-          "description": "The category/type of the location (e.g., maktab, bogcha)"
-        },
-        "lat": {
-          "type": "number",
-          "description": "Latitude coordinate"
-        },
-        "lng": {
-          "type": "number",
-          "description": "Longitude coordinate"
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Creation timestamp"
-        }
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "createdAt": { "type": "string" }
       },
       "required": ["name", "type", "lat", "lng"]
+    },
+    "request": {
+      "title": "Location Request",
+      "description": "Moderation requests for adding or editing locations",
+      "type": "object",
+      "properties": {
+        "actionType": { "type": "string" },
+        "originalId": { "type": "string" },
+        "data": { "type": "object" },
+        "status": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["actionType", "data", "status", "createdBy", "createdAt"]
     }
   },
   "firestore": {
     "/locations/{locationId}": {
       "schema": "location",
       "description": "Collection of map locations"
+    },
+    "/requests/{requestId}": {
+      "schema": "request",
+      "description": "Collection of edit/add requests"
     }
   }
 }

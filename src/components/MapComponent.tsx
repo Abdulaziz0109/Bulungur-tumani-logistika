@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents, Circle, Tooltip } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents, Circle, Tooltip, ZoomControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
@@ -9,25 +9,31 @@ import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activit
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+const getShortLabelString = (name: string) => {
+  const safeName = name || '?';
+  if (safeName.includes("Mening joylashuvim") || safeName.includes("user-gps")) return "📍";
+  if (safeName.includes("Xaritadan") || safeName.includes("custom")) return "📌";
+  const numMatch = safeName.match(/\d+/);
+  return numMatch ? numMatch[0] : safeName.charAt(0).toUpperCase();
+};
+
 const createDivIcon = (type: string, name: string) => {
   let bgColor = '#64748b'; // slate
   if (type === 'maktab') bgColor = '#2563eb'; // blue
   else if (type === 'bogcha' || type === 'dmtt') bgColor = '#ef4444'; // red-500
   else if (type === 'boshqa' || type === 'tashkilot') bgColor = '#059669'; // emerald
 
-  const safeName = name || '?';
-  const numMatch = safeName.match(/\d+/);
-  const label = numMatch ? numMatch[0] : safeName.charAt(0).toUpperCase();
+  const label = getShortLabelString(name);
 
   return new L.DivIcon({
     className: 'bg-transparent border-0',
-    html: `<div style="background-color: ${bgColor}; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bolder; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-size: 14px; font-family: ui-sans-serif, system-ui, sans-serif; position: relative;">
+    html: `<div style="background-color: ${bgColor}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bolder; border: 2px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-size: 11px; font-family: ui-sans-serif, system-ui, sans-serif; position: relative;">
             ${label}
-            <div style="position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid ${bgColor};"></div>
+            <div style="position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid ${bgColor};"></div>
           </div>`,
-    iconSize: [34, 42],
-    iconAnchor: [17, 40],
-    popupAnchor: [0, -40]
+    iconSize: [24, 30],
+    iconAnchor: [12, 30],
+    popupAnchor: [0, -30]
   });
 };
 
@@ -61,6 +67,8 @@ export default function MapComponent() {
   const [multiRouteGeometries, setMultiRouteGeometries] = useState<{coords: [number, number][], color: string}[] | null>(null);
   const [vehiclesCount, setVehiclesCount] = useState<number>(1);
   const [isRoundtrip, setIsRoundtrip] = useState<boolean>(false);
+  const [isStartMyLoc, setIsStartMyLoc] = useState<boolean>(false);
+  const [isEndMyLoc, setIsEndMyLoc] = useState<boolean>(false);
   const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(false);
   const [routeStats, setRouteStats] = useState<{distance: number, duration: number} | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -87,6 +95,9 @@ export default function MapComponent() {
   const [layers, setLayers] = useState({ district: true, neighborhoods: false, highways: false });
   const [highwaysData, setHighwaysData] = useState<any>(null);
   const [isLoadingHighways, setIsLoadingHighways] = useState(false);
+
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingLocation, setEditingLocation] = useState<Location | null>(null);
 
   const mapRef = useRef<L.Map>(null);
   const markerRefs = useRef<{[key: string]: L.Marker | null}>({});
@@ -194,18 +205,20 @@ export default function MapComponent() {
              lng: parseFloat(e.latlng.lng.toFixed(6))
            };
            setSelectedLocations(prev => {
-             // If we want it to be the start point, maybe we can prepend it?
-             // Or let's just prepend it so it's the start point.
-             return [customLocation, ...prev];
+             return [...prev, customLocation];
            });
-           showToast("Xaritadan boshlang'ich nuqta qo'shildi!", "success");
+           showToast("Xaritadan nuqta marshrutga qo'shildi!", "success");
            setIsPickingRoutePoint(false);
            return;
         } else if (isPickingLocation && !isRadiusMode) {
           setNewLocLat(parseFloat(e.latlng.lat.toFixed(6)));
           setNewLocLng(parseFloat(e.latlng.lng.toFixed(6)));
           setIsPickingLocation(false);
-          setIsAddModalOpen(true); // Re-open modal after picking
+          if (editingLocation) {
+              setIsEditModalOpen(true);
+          } else {
+              setIsAddModalOpen(true); // Re-open modal after picking
+          }
         } else if (isRadiusMode) {
           const lat = e.latlng.lat;
           const lng = e.latlng.lng;
@@ -262,22 +275,7 @@ export default function MapComponent() {
           mapRef.current.flyTo([lat, lng], 14, { duration: 1.5 });
         }
         
-        // Add to selectedLocations at the start
-        const gpsLocation: Location = {
-          id: 'user-gps-location',
-          name: '📍 Mening joylashuvim (Start)',
-          type: 'boshqa',
-          lat: lat,
-          lng: lng
-        };
-        
-        setSelectedLocations(prev => {
-          // Remove if it already exists, then prepend to start
-          const filtered = prev.filter(loc => loc.id !== 'user-gps-location');
-          return [gpsLocation, ...filtered];
-        });
-        
-        showToast("📍 Joylashuvingiz aniqlandi va marshrut boshiga qo'shildi.", 'success');
+        showToast("📍 Joylashuvingiz aniqlandi.", 'success');
       },
       (error) => {
         console.error("GPS Error:", error);
@@ -295,6 +293,47 @@ export default function MapComponent() {
     );
   };
 
+  const handleCycleMyLocation = () => {
+    if (!isStartMyLoc && !isEndMyLoc) {
+       handleToggleStartMyLoc(true);
+    } else if (isStartMyLoc && !isEndMyLoc) {
+       handleToggleEndMyLoc(true);
+    } else {
+       handleToggleStartMyLoc(false);
+       handleToggleEndMyLoc(false);
+    }
+  };
+
+  const handleToggleStartMyLoc = (checked: boolean) => {
+    if (checked) {
+       if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
+       navigator.geolocation.getCurrentPosition(pos => {
+           const loc: Location = { id: 'user-gps-start', name: "📍 Mening joylashuvim (Boshlang'ich)", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
+           setSelectedLocations(prev => [loc, ...prev.filter(l => l.id !== 'user-gps-start')]);
+           setIsStartMyLoc(true);
+           showToast("Joylashuvingiz marshrut boshiga qo'shildi", "success");
+       });
+    } else {
+       setSelectedLocations(prev => prev.filter(l => l.id !== 'user-gps-start'));
+       setIsStartMyLoc(false);
+    }
+  };
+
+  const handleToggleEndMyLoc = (checked: boolean) => {
+    if (checked) {
+       if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
+       navigator.geolocation.getCurrentPosition(pos => {
+           const loc: Location = { id: 'user-gps-end', name: "🏁 Mening joylashuvim (Yakuniy)", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
+           setSelectedLocations(prev => [...prev.filter(l => l.id !== 'user-gps-end'), loc]);
+           setIsEndMyLoc(true);
+           showToast("Joylashuvingiz marshrut oxiriga qo'shildi", "success");
+       });
+    } else {
+       setSelectedLocations(prev => prev.filter(l => l.id !== 'user-gps-end'));
+       setIsEndMyLoc(false);
+    }
+  };
+
   const handleAddLocation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -305,12 +344,26 @@ export default function MapComponent() {
     
     setIsSubmitting(true);
     try {
-      await addDoc(collection(db, 'locations'), {
+      const locationData = {
         name: newLocName.trim(),
         type: newLocType,
         lat: Number(newLocLat),
         lng: Number(newLocLng),
-      });
+      };
+
+      if (role === 'admin') {
+        await addDoc(collection(db, 'locations'), locationData);
+        showToast("Muvaffaqiyatli qo'shildi!", "success");
+      } else {
+        await addDoc(collection(db, 'requests'), {
+          actionType: 'add',
+          data: locationData,
+          status: 'pending',
+          createdBy: currentUser.uid,
+          createdAt: new Date().toISOString()
+        });
+        showToast("Yangi joylashuv taklifi adminga yuborildi!", "success");
+      }
       
       setNewLocName('');
       setNewLocType('maktab');
@@ -319,7 +372,6 @@ export default function MapComponent() {
       setIsAddModalOpen(false);
       
       fetchLocations();
-      showToast("Muvaffaqiyatli qo'shildi!", "success");
     } catch (error) {
       console.error("Xatolik:", error);
       showToast("Xatolik yuz berdi!", "error");
@@ -328,16 +380,77 @@ export default function MapComponent() {
     }
   };
 
+  const handleEditLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !editingLocation) return;
+    if (!newLocName.trim() || !newLocType || newLocLat === '' || newLocLng === '') {
+      showToast("Barcha maydonlarni to'ldiring", "error");
+      return;
+    }
+    
+    setIsSubmitting(true);
+    try {
+      const locationData = {
+        name: newLocName.trim(),
+        type: newLocType,
+        lat: Number(newLocLat),
+        lng: Number(newLocLng),
+      };
+
+      if (role === 'admin') {
+        // Direct update for admin
+        import('firebase/firestore').then(async ({ updateDoc }) => {
+            const docRef = doc(db, 'locations', editingLocation.id);
+            await updateDoc(docRef, locationData);
+            showToast("Muvaffaqiyatli tahrirlandi!", "success");
+            setIsEditModalOpen(false);
+            setEditingLocation(null);
+            fetchLocations();
+        });
+      } else {
+        await addDoc(collection(db, 'requests'), {
+          actionType: 'edit',
+          originalId: editingLocation.id,
+          data: locationData,
+          status: 'pending',
+          createdBy: currentUser.uid,
+          createdAt: new Date().toISOString()
+        });
+        showToast("Tahrirlash taklifi adminga yuborildi!", "success");
+        setIsEditModalOpen(false);
+        setEditingLocation(null);
+      }
+    } catch (error: any) {
+      console.error("Xatolik:", error);
+      showToast(error.message || "Xatolik yuz berdi!", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openEditModal = (loc: Location) => {
+    setEditingLocation(loc);
+    setNewLocName(loc.name);
+    setNewLocType(loc.type);
+    setNewLocLat(loc.lat);
+    setNewLocLng(loc.lng);
+    setIsEditModalOpen(true);
+  };
+
   const handleDeleteLocation = async (id: string | undefined) => {
     if (!currentUser) return;
     if (!id) return;
     if (window.confirm("Haqiqatan ham bu ob'ektni o'chirmoqchimisiz?")) {
       try {
-        await deleteDoc(doc(db, 'locations', id));
-        fetchLocations();
-        showToast("Muvaffaqiyatli o'chirildi!", "success");
-        // Remove from selected route if exists
-        setSelectedLocations(prev => prev.filter(loc => loc.id !== id));
+        if (role === 'admin') {
+           await deleteDoc(doc(db, 'locations', id));
+           fetchLocations();
+           showToast("Muvaffaqiyatli o'chirildi!", "success");
+           setSelectedLocations(prev => prev.filter(loc => loc.id !== id));
+        } else {
+           // Not supporting delete requests currently, simply show message
+           showToast("Faqat admin o'chira oladi. Tahrirlash orqali taklif bering.", "error");
+        }
       } catch (error) {
         console.error("Xatolik o'chirishda:", error);
         showToast("O'chirishda xatolik yuz berdi!", "error");
@@ -480,9 +593,19 @@ export default function MapComponent() {
     }
   };
 
+  const handleClearRoute = () => {
+    setSelectedLocations([]);
+    setIsStartMyLoc(false);
+    setIsEndMyLoc(false);
+    setRouteGeometry(null);
+    setRouteStats(null);
+  };
+
   const removeLocation = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setSelectedLocations(selectedLocations.filter(l => l.id !== id));
+    if (id === 'user-gps-start') setIsStartMyLoc(false);
+    if (id === 'user-gps-end') setIsEndMyLoc(false);
     setRouteGeometry(null);
     setRouteStats(null);
   };
@@ -797,7 +920,12 @@ export default function MapComponent() {
             if (isPickingRoutePoint) {
                setIsPickingRoutePoint(false);
             } else {
-               setIsPickingLocation(false); setIsAddModalOpen(true); 
+               setIsPickingLocation(false); 
+               if (editingLocation) {
+                   setIsEditModalOpen(true);
+               } else {
+                   setIsAddModalOpen(true); 
+               }
             }
           }} className="text-[10px] md:text-xs text-slate-300 hover:text-white font-bold transition-colors whitespace-nowrap shrink-0">
             Bekor qilish
@@ -818,42 +946,44 @@ export default function MapComponent() {
         </button>
       )}
 
-      {/* GPS Button */}
-      <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-2`}>
-        <button
-          onClick={handleGetLocation}
-          title="Mening joylashuvim"
-          className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 p-2.5 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group"
-        >
-          <MapPin className="w-5 h-5 md:w-6 md:h-6 text-blue-600 group-hover:text-blue-700 transition-colors" />
-        </button>
-        
+      {/* Zoom Control Position fix is above in MapContainer */}
+
+      {/* Primary Action Buttons On Map */}
+      <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-3`}>
         <button
           onClick={() => setIsPickingRoutePoint(true)}
-          title="Xaritadan boshlang'ich nuqta belgilash"
-          className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 p-2.5 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group"
+          title="Xaritadan nuqta marshrutga qo'shish"
+          className="bg-white/95 backdrop-blur-md hover:bg-slate-50 text-slate-800 p-3 md:p-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group"
         >
-          <LocateFixed className="w-5 h-5 md:w-6 md:h-6 text-emerald-600 group-hover:text-emerald-700 transition-colors" />
+          <MousePointer2 className="w-5 h-5 md:w-6 md:h-6 text-emerald-600 group-hover:text-emerald-700 transition-colors" />
         </button>
       </div>
 
-      {/* Modal - Add Location */}
-      {isAddModalOpen && currentUser && (
+      {/* Modal - Add/Edit Location */}
+      {(isAddModalOpen || isEditModalOpen) && currentUser && (
         <div 
           className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setIsAddModalOpen(false);
+            if (e.target === e.currentTarget) {
+                setIsAddModalOpen(false);
+                setIsEditModalOpen(false);
+            }
           }}
         >
           <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-md w-full max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
             <div className="p-6 pb-4 border-b border-slate-100 flex justify-between items-center shrink-0">
-              <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">Yangi ob'ekt qo'shish</h2>
-              <button onClick={() => setIsAddModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+              <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                  {isEditModalOpen ? (role === 'admin' ? "Ob'ektni tahrirlash" : "Tahrirlash taklifi") : "Yangi ob'ekt qo'shish"}
+              </h2>
+              <button 
+                onClick={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); }} 
+                className="w-8 h-8 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                >
                 <X className="w-5 h-5" />
               </button>
             </div>
             
-            <form onSubmit={handleAddLocation} className="p-6 space-y-5 overflow-y-auto">
+            <form onSubmit={isEditModalOpen ? handleEditLocation : handleAddLocation} className="p-6 space-y-5 overflow-y-auto">
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Nomi</label>
                 <input 
@@ -905,7 +1035,7 @@ export default function MapComponent() {
 
               <button 
                 type="button"
-                onClick={() => { setIsAddModalOpen(false); setIsPickingLocation(true); }}
+                onClick={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); setIsPickingLocation(true); }}
                 className="w-full py-3 bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold text-sm rounded-xl border border-blue-100 transition-colors flex justify-center items-center space-x-2"
               >
                 <MapPin className="w-4 h-4" />
@@ -924,7 +1054,7 @@ export default function MapComponent() {
                        Saqlanmoqda
                     </span>
                   ) : (
-                    "Saqlash"
+                    isEditModalOpen && role !== 'admin' ? "Taklif yuborish" : "Saqlash"
                   )}
                 </button>
                 
@@ -1091,7 +1221,9 @@ export default function MapComponent() {
         zoom={12} 
         className="w-full h-screen z-0 print:hidden"
         ref={mapRef}
+        zoomControl={false}
       >
+        <ZoomControl position="bottomright" />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -1139,8 +1271,8 @@ export default function MapComponent() {
             eventHandlers={{ click: () => handleMarkerClick(loc) }}
             ref={(el) => { markerRefs.current[loc.id] = el; }}
           >
-            <Tooltip interactive={true} opacity={0.95} direction="top" offset={[0, -20]} className="border-0 shadow-2xl bg-white/95 backdrop-blur-sm rounded-2xl p-3 max-w-[200px]">
-              <div className="font-sans text-center">
+            <Popup offset={[0, -20]}>
+              <div className="font-sans text-center mt-1">
                 <h3 className="font-extrabold text-[13px] text-slate-800 leading-tight mb-1">{loc.name}</h3>
                 <p className="text-[10px] font-medium text-slate-500 capitalize mb-2 bg-slate-100 rounded px-1.5 py-0.5 inline-block">
                   {loc.type === 'dmtt' ? "Maktabgacha ta'lim" : loc.type}
@@ -1154,6 +1286,15 @@ export default function MapComponent() {
                   </button>
                   {currentUser && (
                     <button 
+                      onClick={(e) => { e.stopPropagation(); openEditModal(loc); }}
+                      className="print:hidden w-full px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center cursor-pointer"
+                      title="Joylashuv xatomi? To'g'irlash"
+                    >
+                      {role === 'admin' ? "To'g'irlash" : "To'g'irlash (Taklif)"}
+                    </button>
+                  )}
+                  {(currentUser && role === 'admin') && (
+                    <button 
                       onClick={(e) => { e.stopPropagation(); handleDeleteLocation(loc.id); }}
                       className="print:hidden w-full px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
                     >
@@ -1162,7 +1303,7 @@ export default function MapComponent() {
                   )}
                 </div>
               </div>
-            </Tooltip>
+            </Popup>
           </Marker>
         ))}
         {layers.district && districtBoundary && (
@@ -1242,15 +1383,29 @@ export default function MapComponent() {
 
           <div className="flex items-center justify-between mb-4 shrink-0 hidden md:flex">
             <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut</h2>
-            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
-              <Route className="w-4 h-4" />
+            <div className="flex space-x-2">
+              {selectedLocations.length > 0 && (
+                <button onClick={handleClearRoute} className="w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center transition-colors border border-red-200" title="Tozalash">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
+                <Route className="w-4 h-4" />
+              </div>
             </div>
           </div>
           
           <div className="flex items-center justify-between mb-4 shrink-0 md:hidden">
             <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut paneli</h2>
-            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
-              <Route className="w-4 h-4" />
+            <div className="flex space-x-2">
+              {selectedLocations.length > 0 && (
+                <button onClick={handleClearRoute} className="w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center transition-colors border border-red-200" title="Tozalash">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
+                <Route className="w-4 h-4" />
+              </div>
             </div>
           </div>
           
@@ -1261,22 +1416,24 @@ export default function MapComponent() {
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {selectedLocations.map((loc, idx) => (
-                  <div key={loc.id} className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-full shadow-sm relative group cursor-pointer" title={loc.name}>
-                    <div className="w-6 h-6 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0 shadow-sm">
-                      {idx + 1}
+                {selectedLocations.map((loc, idx) => {
+                  let bgColor = 'bg-slate-500';
+                  if (loc.type === 'maktab') bgColor = 'bg-blue-600';
+                  else if (loc.type === 'bogcha' || loc.type === 'dmtt') bgColor = 'bg-red-500';
+                  else if (loc.type === 'boshqa' || loc.type === 'tashkilot') bgColor = 'bg-emerald-600';
+
+                  return (
+                    <div 
+                      key={loc.id} 
+                      onClick={(e) => removeLocation(e, loc.id)}
+                      className={`relative w-8 h-8 rounded-full text-white text-xs font-bold flex items-center justify-center shadow-md cursor-pointer group hover:bg-red-500 transition-colors border-2 border-white ${bgColor}`} 
+                      title={loc.name}
+                    >
+                      <span className="group-hover:hidden">{getShortLabelString(loc.name)}</span>
+                      <X className="w-4 h-4 hidden group-hover:block" />
                     </div>
-                    <span className="text-[10px] font-bold text-slate-600 uppercase pr-1">{loc.type === 'dmtt' ? "Bog'cha" : loc.type}</span>
-                    {currentUser && (
-                      <button 
-                        onClick={(e) => removeLocation(e, loc.id)}
-                        className="print:hidden text-slate-400 hover:text-red-500 transition-colors ml-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1294,6 +1451,20 @@ export default function MapComponent() {
               </label>
             )}
             
+            <div className="flex flex-col space-y-2 mb-4">
+               <button 
+                 onClick={handleCycleMyLocation}
+                 className={`flex items-center justify-between p-3 rounded-xl border transition-colors shadow-sm ${(!isStartMyLoc && !isEndMyLoc) ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100' : (isStartMyLoc && !isEndMyLoc) ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}`}
+               >
+                  <div className="flex items-center space-x-2">
+                     <span className="text-lg">{(!isStartMyLoc && !isEndMyLoc) ? '📍' : (isStartMyLoc && !isEndMyLoc) ? '📍' : '🔄'}</span>
+                     <span className="text-[13px] font-bold">
+                       {(!isStartMyLoc && !isEndMyLoc) ? 'Joylashuvimni marshrutga qo\'shish' : (isStartMyLoc && !isEndMyLoc) ? '📍 Faqat boshlang\'ich nuqta' : '🔄 Boshlang\'ich va Yakuniy nuqta'}
+                     </span>
+                  </div>
+               </button>
+            </div>
+
             <div className="flex space-x-2">
               <button 
                 className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all ${
@@ -1389,7 +1560,7 @@ export default function MapComponent() {
 
         {/* Legend Panel (Condensed version) */}
         {!routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-5 mx-2 md:mx-0 mb-4 md:mb-0 rounded-3xl shadow-xl border border-slate-100 shrink-0">
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-5 mx-2 md:ml-0 md:mr-16 mb-6 md:mb-6 rounded-3xl shadow-xl border border-slate-100 shrink-0">
             <h4 className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-3">Xarita belgilari</h4>
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
