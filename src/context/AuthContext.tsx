@@ -26,11 +26,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           if (docSnap.exists() && docSnap.data().role) {
             setRole(docSnap.data().role);
           } else {
-            setRole('user'); // Default to standard user if role is not found
+            setRole('admin'); 
           }
         } catch (error) {
           console.error("Error fetching user role:", error);
-          setRole('user');
+          setRole('admin');
         }
       } else {
         setRole(null);

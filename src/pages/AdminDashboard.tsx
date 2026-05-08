@@ -139,7 +139,7 @@ export default function AdminDashboard() {
             <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
               <Shield className="w-5 h-5" />
             </div>
-            <h1 className="font-extrabold text-slate-900 tracking-tight text-lg">Admin Panel</h1>
+            <h1 className="font-extrabold text-slate-900 tracking-tight text-lg">Iqtisodchi Paneli</h1>
           </div>
         </div>
         
@@ -190,7 +190,7 @@ export default function AdminDashboard() {
       <div className="flex-1 flex flex-col p-8 overflow-y-auto">
         <div className="md:hidden flex items-center mb-6 space-x-4">
            <button onClick={() => navigate('/')} className="p-2 bg-white rounded-lg shadow-sm border border-slate-100 text-slate-600"><ArrowLeft className="w-5 h-5"/></button>
-           <h1 className="text-xl font-extrabold text-slate-900">Admin Panel</h1>
+           <h1 className="text-xl font-extrabold text-slate-900">Iqtisodchi Paneli</h1>
         </div>
 
         <div className="flex justify-between items-center mb-8">
@@ -251,7 +251,7 @@ export default function AdminDashboard() {
                   </td>
                   <td className="px-6 py-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${user.role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                      {user.role === 'admin' ? 'Admin' : 'Iqtisodchi (User)'}
+                      {user.role === 'admin' ? 'Iqtisodchi' : 'Iqtisodchi (User)'}
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -335,8 +335,7 @@ export default function AdminDashboard() {
                <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Rol (Huquq)</label>
                   <select value={newRole} onChange={e=>setNewRole(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white text-sm font-semibold outline-none cursor-pointer">
-                    <option value="user">Iqtisodchi / Logist (Oddiy foydalanuvchi)</option>
-                    <option value="admin">Admin (To'liq boshqaruv)</option>
+                    <option value="admin">Iqtisodchi</option>
                   </select>
                </div>
 

@@ -95,6 +95,8 @@ export default function MapComponent() {
   const [layers, setLayers] = useState({ district: true, neighborhoods: false, highways: false });
   const [highwaysData, setHighwaysData] = useState<any>(null);
   const [isLoadingHighways, setIsLoadingHighways] = useState(false);
+  const [neighborhoodsData, setNeighborhoodsData] = useState<any>(null);
+  const [isLoadingNeighborhoods, setIsLoadingNeighborhoods] = useState(false);
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
@@ -545,6 +547,46 @@ export default function MapComponent() {
     }
   }, [layers.highways]);
 
+  useEffect(() => {
+    if (layers.neighborhoods && !neighborhoodsData) {
+      const fetchNeighborhoods = async () => {
+        setIsLoadingNeighborhoods(true);
+        try {
+          const bbox = "39.50,67.05,39.95,67.65"; 
+          const query = `[out:json][timeout:25];(relation["admin_level"~"8|9|10|11"]["boundary"="administrative"](${bbox});way["admin_level"~"8|9|10|11"]["boundary"="administrative"](${bbox}););out geom;`;
+          const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+          const data = await res.json();
+          const features: any[] = [];
+          data.elements.forEach((el: any) => {
+             if (el.type === 'way' && el.geometry) {
+                 features.push({
+                    type: "Feature",
+                    properties: { id: el.id, name: el.tags?.name || '' },
+                    geometry: { type: "LineString", coordinates: el.geometry.map((g: any) => [g.lon, g.lat]) }
+                 });
+             } else if (el.type === 'relation' && el.members) {
+                 el.members.forEach((mem: any) => {
+                     if (mem.geometry) {
+                         features.push({
+                            type: "Feature",
+                            properties: { id: el.id, name: el.tags?.name || '' },
+                            geometry: { type: "LineString", coordinates: mem.geometry.map((g: any) => [g.lon, g.lat]) }
+                         });
+                     }
+                 });
+             }
+          });
+          setNeighborhoodsData({ type: "FeatureCollection", features });
+        } catch (err) {
+          console.error("Neighborhoods fetch error:", err);
+        } finally {
+          setIsLoadingNeighborhoods(false);
+        }
+      };
+      fetchNeighborhoods();
+    }
+  }, [layers.neighborhoods]);
+
   const fetchBoundary = async () => {
     try {
       const res = await fetch('https://nominatim.openstreetmap.org/search?q=Bulungur+district,+Samarqand+Region,+Uzbekistan&polygon_geojson=1&format=json');
@@ -834,7 +876,7 @@ export default function MapComponent() {
             </h1>
             <div className="flex items-center text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 shrink-0"></span>
-               <span className="truncate">{currentUser ? (role === 'admin' ? 'Boshqaruvchi' : 'Iqtisodchi') : 'Mehmon'}</span>
+               <span className="truncate">{currentUser ? 'Iqtisodchi' : 'Mehmon'}</span>
             </div>
           </div>
         </div>
@@ -855,7 +897,7 @@ export default function MapComponent() {
                   className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
                 >
                   <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
-                  <span className="hidden sm:inline">Admin Panel</span>
+                  <span className="hidden sm:inline">Iqtisodchi Paneli</span>
                 </button>
               )}
               <button 
@@ -1014,10 +1056,9 @@ export default function MapComponent() {
                   <input 
                     type="number" step="any"
                     value={newLocLat}
-                    onChange={(e) => setNewLocLat(parseFloat(e.target.value))}
-                    disabled
+                    onChange={(e) => setNewLocLat(e.target.value === '' ? '' : parseFloat(e.target.value))}
                     placeholder="..." 
-                    className="w-full px-4 py-3.5 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 outline-none text-xs font-mono font-bold"
+                    className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 outline-none focus:border-blue-400 focus:bg-white text-xs font-mono font-bold transition-colors"
                   />
                 </div>
                 <div>
@@ -1025,10 +1066,9 @@ export default function MapComponent() {
                   <input 
                     type="number" step="any"
                     value={newLocLng}
-                    onChange={(e) => setNewLocLng(parseFloat(e.target.value))}
-                    disabled
+                    onChange={(e) => setNewLocLng(e.target.value === '' ? '' : parseFloat(e.target.value))}
                     placeholder="..." 
-                    className="w-full px-4 py-3.5 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 outline-none text-xs font-mono font-bold"
+                    className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 outline-none focus:border-blue-400 focus:bg-white text-xs font-mono font-bold transition-colors"
                   />
                 </div>
               </div>
@@ -1155,11 +1195,12 @@ export default function MapComponent() {
 
                 {/* Area Search */}
                 <div>
-                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><Search className="w-3 h-3 mr-1.5"/> Hudud / Mahalla chegarasini chizish</h3>
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><Search className="w-3 h-3 mr-1.5"/> Maxsus hudud chegarasini izlab chizish</h3>
+                    <p className="text-[10px] text-slate-500 font-medium mb-2">Biron mahalla yoki qishloq nomini kiriting. (OSM bazasida mavjud bo'lsa chiziladi)</p>
                     <div className="flex items-center space-x-2">
                         <input 
                             type="text" 
-                            placeholder="Masalan: Oqtepa, Samarqand" 
+                            placeholder="Masalan: Oqtepa..." 
                             className="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
                             value={searchAreaQuery}
                             onChange={(e) => setSearchAreaQuery(e.target.value)}
@@ -1204,7 +1245,10 @@ export default function MapComponent() {
                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><MapIcon className="w-3 h-3 mr-1.5"/> Xarita qatlamlari</h3>
                    <div className="space-y-2">
                       <Toggle label="Tuman chegarasi (GeoJSON)" checked={layers.district} onChange={(v) => setLayers({...layers, district: v})} color="bg-indigo-600" />
-                      <Toggle label="Mahallalar chegarasi" checked={layers.neighborhoods} onChange={(v) => setLayers({...layers, neighborhoods: v})} color="bg-indigo-600" />
+                      <div className="flex items-center justify-between">
+                         <Toggle label="Mahallalar chegarasi" checked={layers.neighborhoods} onChange={(v) => setLayers({...layers, neighborhoods: v})} color="bg-indigo-600" />
+                         {isLoadingNeighborhoods && <span className="text-[10px] text-indigo-500 font-bold ml-2 animate-pulse">Yuklanmoqda...</span>}
+                      </div>
                       <div className="flex items-center justify-between">
                          <Toggle label="Katta yo'llar (Highways)" checked={layers.highways} onChange={(v) => setLayers({...layers, highways: v})} color="bg-amber-500" />
                          {isLoadingHighways && <span className="text-[10px] text-amber-500 font-bold ml-2 animate-pulse">Yuklanmoqda...</span>}
@@ -1317,6 +1361,17 @@ export default function MapComponent() {
             key={JSON.stringify(mahallaBoundary)} // force remount when geometry changes
             data={mahallaBoundary} 
             style={{ color: '#ef4444', weight: 2, dashArray: '5, 5', fillColor: '#ef4444', fillOpacity: 0.1 }} 
+          />
+        )}
+        {layers.neighborhoods && neighborhoodsData && (
+          <GeoJSON 
+            data={neighborhoodsData} 
+            style={{ color: '#6366f1', weight: 2, dashArray: '4, 4', fillOpacity: 0 }}
+            onEachFeature={(feature, layer) => {
+               if (feature.properties?.name) {
+                  layer.bindTooltip(feature.properties.name, { permanent: false, direction: 'center', className: 'text-[10px] font-bold bg-white/90 border-0 rounded shadow-sm px-1.5 py-0.5' });
+               }
+            }}
           />
         )}
         {layers.highways && highwaysData && (
