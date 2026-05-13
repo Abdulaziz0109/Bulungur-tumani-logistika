@@ -311,12 +311,14 @@ export default function MapComponent() {
       pos => {
         const customId = `gps-${Date.now()}`;
         const loc: Location = { id: customId, name: "📍 Mening joylashuvim", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setUserLocation([pos.coords.latitude, pos.coords.longitude]);
         setSelectedLocations(prev => {
-          // If the user already has a GPS point, maybe warn them or replace it? 
-          // It's fine to add multiple for now, or just prepend to the start
           return [loc, ...prev];
         });
         showToast("Joylashuvingiz ro'yxat boshiga qo'shildi", "success");
+        if (mapRef.current) {
+          mapRef.current.flyTo([pos.coords.latitude, pos.coords.longitude], 15);
+        }
       },
       err => {
         console.error("GPS Error:", err);
@@ -1674,6 +1676,29 @@ export default function MapComponent() {
                       O'chirish
                     </button>
                   )}
+                </div>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
+
+        {/* Custom Pinned Points and GPS points */}
+        {selectedLocations.filter(loc => loc.id.startsWith('custom-') || loc.id.startsWith('gps-')).map((loc) => (
+          <Marker 
+            key={loc.id} 
+            position={[loc.lat, loc.lng]} 
+            icon={createDivIcon(loc.type, loc.name)}
+          >
+            <Popup offset={[0, -20]}>
+              <div className="font-sans text-center mt-1">
+                <h3 className="font-extrabold text-[13px] text-slate-800 leading-tight mb-1">{loc.name}</h3>
+                <div className="flex flex-col space-y-1.5 pt-1 border-t border-slate-100">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); removeLocation(e, loc.id); }}
+                    className="print:hidden w-full px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
+                  >
+                    Marshrutdan o'chirish
+                  </button>
                 </div>
               </div>
             </Popup>
