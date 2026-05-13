@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -43,6 +43,9 @@ interface Location {
   type: string;
   lat: number;
   lng: number;
+  capacity?: number;
+  area?: number;
+  landmark?: string;
 }
 
 function Toggle({ label, checked, onChange, color = "bg-blue-600" }: { label: string, checked: boolean, onChange: (v: boolean) => void, color?: string }) {
@@ -70,7 +73,7 @@ export default function MapComponent() {
   const [isStartMyLoc, setIsStartMyLoc] = useState<boolean>(false);
   const [isEndMyLoc, setIsEndMyLoc] = useState<boolean>(false);
   const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(false);
-  const [routeStats, setRouteStats] = useState<{distance: number, duration: number} | null>(null);
+  const [routeStats, setRouteStats] = useState<any>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [districtBoundary, setDistrictBoundary] = useState<any>(null);
 
@@ -86,6 +89,9 @@ export default function MapComponent() {
   const [newLocType, setNewLocType] = useState('maktab');
   const [newLocLat, setNewLocLat] = useState<number | ''>('');
   const [newLocLng, setNewLocLng] = useState<number | ''>('');
+  const [newLocCapacity, setNewLocCapacity] = useState<number | ''>('');
+  const [newLocArea, setNewLocArea] = useState<number | ''>('');
+  const [newLocLandmark, setNewLocLandmark] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null);
 
@@ -100,6 +106,10 @@ export default function MapComponent() {
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
+  
+  const [isBatchSelectModalOpen, setIsBatchSelectModalOpen] = useState(false);
+  const [batchSearchQuery, setBatchSearchQuery] = useState('');
+  const [batchTypeFilter, setBatchTypeFilter] = useState('all');
 
   const mapRef = useRef<L.Map>(null);
   const markerRefs = useRef<{[key: string]: L.Marker | null}>({});
@@ -346,12 +356,15 @@ export default function MapComponent() {
     
     setIsSubmitting(true);
     try {
-      const locationData = {
+      const locationData: any = {
         name: newLocName.trim(),
         type: newLocType,
         lat: Number(newLocLat),
         lng: Number(newLocLng),
       };
+      if (newLocCapacity !== '') locationData.capacity = Number(newLocCapacity);
+      if (newLocArea !== '') locationData.area = Number(newLocArea);
+      if (newLocLandmark.trim() !== '') locationData.landmark = newLocLandmark.trim();
 
       if (role === 'admin') {
         await addDoc(collection(db, 'locations'), locationData);
@@ -392,12 +405,15 @@ export default function MapComponent() {
     
     setIsSubmitting(true);
     try {
-      const locationData = {
+      const locationData: any = {
         name: newLocName.trim(),
         type: newLocType,
         lat: Number(newLocLat),
         lng: Number(newLocLng),
       };
+      if (newLocCapacity !== '') locationData.capacity = Number(newLocCapacity);
+      if (newLocArea !== '') locationData.area = Number(newLocArea);
+      if (newLocLandmark.trim() !== '') locationData.landmark = newLocLandmark.trim();
 
       if (role === 'admin') {
         // Direct update for admin
@@ -436,6 +452,9 @@ export default function MapComponent() {
     setNewLocType(loc.type);
     setNewLocLat(loc.lat);
     setNewLocLng(loc.lng);
+    setNewLocCapacity(loc.capacity || '');
+    setNewLocArea(loc.area || '');
+    setNewLocLandmark(loc.landmark || '');
     setIsEditModalOpen(true);
   };
 
@@ -788,19 +807,27 @@ export default function MapComponent() {
           const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
           setRouteGeometry(routeCoords);
           
-          setRouteStats({
-            distance: trip.distance,
-            duration: trip.duration
-          });
-          setOptimizedRouteDistance(trip.distance);
-
+          let orderedLocations = selectedLocations;
           if (data.waypoints) {
             const reordered = new Array(selectedLocations.length);
             data.waypoints.forEach((wp: any, i: number) => {
               reordered[wp.waypoint_index] = selectedLocations[i];
             });
             setSelectedLocations(reordered);
+            orderedLocations = reordered;
           }
+
+          setRouteStats({
+            distance: trip.distance,
+            duration: trip.duration,
+            routes: [{
+              distance: trip.distance,
+              duration: trip.duration,
+              locations: orderedLocations,
+              color: '#3b82f6'
+            }]
+          });
+          setOptimizedRouteDistance(trip.distance);
         } else {
           showToast("Optimallashtirilgan yo'nalish topilmadi", "error");
         }
@@ -825,6 +852,7 @@ export default function MapComponent() {
         let totalDist = 0;
         let totalDur = 0;
         const multi = [];
+        const routes = [];
         
         for (let i = 0; i < clusters.length; i++) {
            const cluster = clusters[i];
@@ -839,12 +867,27 @@ export default function MapComponent() {
                const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
                totalDist += trip.distance;
                totalDur += trip.duration;
-               multi.push({coords: routeCoords, color: colors[i % colors.length]});
+               const color = colors[i % colors.length];
+               multi.push({coords: routeCoords, color});
+
+               let orderedLocations = cluster;
+               if (data.waypoints) {
+                 orderedLocations = new Array(cluster.length);
+                 data.waypoints.forEach((wp: any, idx: number) => {
+                   orderedLocations[wp.waypoint_index] = cluster[idx];
+                 });
+               }
+               routes.push({
+                 distance: trip.distance,
+                 duration: trip.duration,
+                 locations: orderedLocations,
+                 color
+               });
            }
         }
         
         setMultiRouteGeometries(multi);
-        setRouteStats({ distance: totalDist, duration: totalDur });
+        setRouteStats({ distance: totalDist, duration: totalDur, routes });
         setOptimizedRouteDistance(totalDist);
       }
     } catch (error) {
@@ -1038,6 +1081,17 @@ export default function MapComponent() {
               </div>
 
               <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Yaqinidagi taniqli joy (Mo'ljal)</label>
+                <input 
+                  type="text" 
+                  value={newLocLandmark}
+                  onChange={(e) => setNewLocLandmark(e.target.value)}
+                  placeholder="Masalan: Katta bozor yonida" 
+                  className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                />
+              </div>
+
+              <div>
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Turi</label>
                 <select 
                   value={newLocType}
@@ -1072,6 +1126,31 @@ export default function MapComponent() {
                   />
                 </div>
               </div>
+
+              {(newLocType === 'maktab' || newLocType === 'bogcha' || newLocType === 'dmtt') && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Sig'imi (O'rin)</label>
+                    <input 
+                      type="number" step="any"
+                      value={newLocCapacity}
+                      onChange={(e) => setNewLocCapacity(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                      placeholder="0" 
+                      className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 outline-none focus:border-blue-400 focus:bg-white text-sm font-semibold transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Maydoni (Ga)</label>
+                    <input 
+                      type="number" step="any"
+                      value={newLocArea}
+                      onChange={(e) => setNewLocArea(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                      placeholder="0.0" 
+                      className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 outline-none focus:border-blue-400 focus:bg-white text-sm font-semibold transition-colors"
+                    />
+                  </div>
+                </div>
+              )}
 
               <button 
                 type="button"
@@ -1260,6 +1339,249 @@ export default function MapComponent() {
         </div>
       )}
 
+      {/* Batch Select Modal (Full Page) */}
+      {isBatchSelectModalOpen && (
+        <div 
+          className="fixed inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 md:p-12 animate-in fade-in duration-200 print:hidden"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsBatchSelectModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-3xl shadow-2xl w-full h-[90vh] md:h-full max-w-6xl overflow-hidden flex flex-col transform animate-in zoom-in-95 duration-200">
+             <div className="p-5 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
+               <div className="flex items-center space-x-2">
+                 <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                    <Sparkles className="w-5 h-5" />
+                 </div>
+                 <div>
+                   <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Kengaytirilgan tanlash paneli</h2>
+                   <p className="text-xs text-slate-500 font-medium">Marshrut uchun ob'ektlarni tez va oson tanlang</p>
+                 </div>
+               </div>
+               <button onClick={() => setIsBatchSelectModalOpen(false)} className="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-slate-200 hover:bg-slate-100 text-slate-500 transition-colors shadow-sm">
+                 <X className="w-5 h-5"/>
+               </button>
+             </div>
+             
+             <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
+                
+                {/* Left Sidebar: Quick Actions */}
+                <div className="w-full md:w-80 h-auto md:h-full border-b md:border-b-0 md:border-r border-slate-100 bg-slate-50/50 p-5 overflow-y-auto space-y-6 shrink-0">
+                   <div>
+                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Tezkor amallar</h3>
+                     <div className="space-y-2">
+                        <button 
+                          onClick={() => {
+                            const newAddition = locations.filter(loc => !selectedLocations.some(s => s.id === loc.id));
+                            setSelectedLocations([...selectedLocations, ...newAddition]);
+                            showToast(`${newAddition.length} ta manzil qo'shildi!`, 'success');
+                          }}
+                          className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-indigo-500 hover:bg-indigo-50 shadow-sm transition-all group"
+                        >
+                          <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-indigo-100 text-slate-500 group-hover:text-indigo-600 flex items-center justify-center">
+                                <Layers className="w-4 h-4" />
+                              </div>
+                              <div className="text-left">
+                                <div className="font-bold text-slate-900 text-sm">Barcha manzillar</div>
+                                <div className="text-[10px] text-slate-500">Jami {locations.length} ta</div>
+                              </div>
+                          </div>
+                          <Plus className="w-4 h-4 text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            const newAddition = locations.filter(loc => loc.type === 'maktab' && !selectedLocations.some(s => s.id === loc.id));
+                            setSelectedLocations([...selectedLocations, ...newAddition]);
+                            showToast(`${newAddition.length} ta maktab qo'shildi!`, 'success');
+                          }}
+                          className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-blue-500 hover:bg-blue-50 shadow-sm transition-all group"
+                        >
+                          <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-blue-100 text-slate-500 group-hover:text-blue-600 flex items-center justify-center">
+                                <div className="w-3 h-3 rounded-full bg-blue-600"></div>
+                              </div>
+                              <div className="text-left">
+                                <div className="font-bold text-slate-900 text-sm">Faqat Maktablar</div>
+                                <div className="text-[10px] text-slate-500">{locations.filter(l => l.type === 'maktab').length} ta</div>
+                              </div>
+                          </div>
+                          <Plus className="w-4 h-4 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            const newAddition = locations.filter(loc => (loc.type === 'dmtt' || loc.type === 'bogcha') && !selectedLocations.some(s => s.id === loc.id));
+                            setSelectedLocations([...selectedLocations, ...newAddition]);
+                            showToast(`${newAddition.length} ta bog'cha qo'shildi!`, 'success');
+                          }}
+                          className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-white hover:border-red-500 hover:bg-red-50 shadow-sm transition-all group"
+                        >
+                          <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-red-100 text-slate-500 group-hover:text-red-600 flex items-center justify-center">
+                                <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                              </div>
+                              <div className="text-left">
+                                <div className="font-bold text-slate-900 text-sm">Faqat Bog'chalar</div>
+                                <div className="text-[10px] text-slate-500">{locations.filter(l => l.type === 'dmtt' || l.type === 'bogcha').length} ta</div>
+                              </div>
+                          </div>
+                          <Plus className="w-4 h-4 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+
+                        {isRadiusMode && radiusCenter && (
+                          <button 
+                            onClick={() => {
+                              const inRadius = locations.filter(loc => {
+                                const dist = getDistanceFromLatLonInKm(radiusCenter[0], radiusCenter[1], loc.lat, loc.lng);
+                                return dist <= radiusKm;
+                              });
+                              const newAddition = inRadius.filter(loc => !selectedLocations.some(s => s.id === loc.id));
+                              setSelectedLocations([...selectedLocations, ...newAddition]);
+                              showToast(`${newAddition.length} ta manzil qo'shildi!`, 'success');
+                            }}
+                            className="w-full flex items-center justify-between p-3 rounded-xl border-2 border-indigo-200 bg-indigo-50 hover:bg-indigo-100 shadow-sm transition-all group"
+                          >
+                            <div className="flex items-center space-x-3">
+                                <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                                  <Target className="w-4 h-4" />
+                                </div>
+                                <div className="text-left">
+                                  <div className="font-bold text-indigo-900 text-sm">Radiusdagi ob'ektlar</div>
+                                  <div className="text-[10px] text-indigo-700">{radiusKm} km radiusda</div>
+                                </div>
+                            </div>
+                            <Plus className="w-4 h-4 text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
+                        )}
+
+                        <button 
+                          onClick={() => {
+                            setSelectedLocations([]);
+                            showToast("Ro'yxat tozalandi", "success");
+                          }}
+                          className="w-full flex items-center justify-center p-3 rounded-xl border border-slate-200 bg-white hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-600 shadow-sm transition-all font-bold text-sm"
+                        >
+                          Barchasini olib tashlash
+                        </button>
+                     </div>
+                   </div>
+
+                   {/* Filters */}
+                   <div>
+                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Mashrutlar bo'yicha filter</h3>
+                     <div className="flex bg-slate-200/50 p-1 rounded-lg">
+                       <button onClick={() => setBatchTypeFilter('all')} className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${batchTypeFilter === 'all' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Barchasi</button>
+                       <button onClick={() => setBatchTypeFilter('maktab')} className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${batchTypeFilter === 'maktab' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Maktab</button>
+                       <button onClick={() => setBatchTypeFilter('bogcha')} className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${batchTypeFilter === 'bogcha' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Bog'cha</button>
+                       <button onClick={() => setBatchTypeFilter('boshqa')} className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${batchTypeFilter === 'boshqa' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Boshqa</button>
+                     </div>
+                   </div>
+
+                </div>
+
+                {/* Right Area: List of Locations */}
+                <div className="flex-1 flex flex-col min-h-0 bg-white">
+                   <div className="p-4 border-b border-slate-100 shadow-sm z-10 flex flex-col sm:flex-row gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input 
+                          type="text"
+                          value={batchSearchQuery}
+                          onChange={(e) => setBatchSearchQuery(e.target.value)}
+                          placeholder="Manzil nomi yoki mo'ljal bo'yicha qidirish..."
+                          className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 transition-all text-sm font-medium"
+                        />
+                      </div>
+                      <div className="flex items-center space-x-2 shrink-0">
+                         <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-2 rounded-xl">
+                           Tanlangan: <span className="text-indigo-600 font-extrabold">{selectedLocations.length}</span>
+                         </span>
+                      </div>
+                   </div>
+
+                   <div className="flex-1 overflow-y-auto p-2 sm:p-4 bg-slate-50/30">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {locations
+                          .filter(loc => {
+                            if (batchTypeFilter === 'maktab' && loc.type !== 'maktab') return false;
+                            if (batchTypeFilter === 'bogcha' && loc.type !== 'bogcha' && loc.type !== 'dmtt') return false;
+                            if (batchTypeFilter === 'boshqa' && (loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt')) return false;
+                            if (batchSearchQuery) {
+                              const q = batchSearchQuery.toLowerCase();
+                              return loc.name.toLowerCase().includes(q) || (loc.landmark && loc.landmark.toLowerCase().includes(q));
+                            }
+                            return true;
+                          })
+                          .map(loc => {
+                            const isSelected = selectedLocations.some(s => s.id === loc.id);
+                            return (
+                              <div 
+                                key={loc.id}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setSelectedLocations(selectedLocations.filter(s => s.id !== loc.id));
+                                  } else {
+                                    setSelectedLocations([...selectedLocations, loc]);
+                                  }
+                                }}
+                                className={`p-3 rounded-xl border flex items-start space-x-3 cursor-pointer transition-all ${
+                                  isSelected 
+                                    ? 'bg-indigo-50 border-indigo-300 shadow-sm' 
+                                    : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className={`w-5 h-5 rounded border mt-0.5 flex items-center justify-center shrink-0 transition-colors ${
+                                  isSelected ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'
+                                }`}>
+                                  {isSelected && <Check className="w-3 h-3 text-white" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-bold text-sm text-slate-800 tracking-tight truncate" title={loc.name}>{loc.name}</div>
+                                  <div className="flex items-center space-x-2 mt-1">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase">
+                                      {loc.type === 'dmtt' ? 'Bog\'cha' : loc.type}
+                                    </span>
+                                    {loc.landmark && (
+                                      <>
+                                        <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                                        <span className="text-[10px] text-slate-500 italic truncate" title={loc.landmark}>{loc.landmark}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                      
+                      {locations.filter(loc => {
+                        if (batchTypeFilter === 'maktab' && loc.type !== 'maktab') return false;
+                        if (batchTypeFilter === 'bogcha' && loc.type !== 'bogcha' && loc.type !== 'dmtt') return false;
+                        if (batchTypeFilter === 'boshqa' && (loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt')) return false;
+                        if (batchSearchQuery) {
+                          const q = batchSearchQuery.toLowerCase();
+                          return loc.name.toLowerCase().includes(q) || (loc.landmark && loc.landmark.toLowerCase().includes(q));
+                        }
+                        return true;
+                      }).length === 0 && (
+                        <div className="text-center py-12">
+                          <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-400">
+                             <Search className="w-8 h-8" />
+                          </div>
+                          <h3 className="text-sm font-bold text-slate-800 mb-1">Hech narsa topilmadi</h3>
+                          <p className="text-xs text-slate-500">Qidiruv so'zini yoki filterni o'zgartirib ko'ring</p>
+                        </div>
+                      )}
+                   </div>
+                </div>
+
+             </div>
+          </div>
+        </div>
+      )}
+
       <MapContainer 
         center={center} 
         zoom={12} 
@@ -1321,6 +1643,21 @@ export default function MapComponent() {
                 <p className="text-[10px] font-medium text-slate-500 capitalize mb-2 bg-slate-100 rounded px-1.5 py-0.5 inline-block">
                   {loc.type === 'dmtt' ? "Maktabgacha ta'lim" : loc.type}
                 </p>
+                {loc.landmark && (
+                  <div className="text-[9px] text-slate-500 italic mb-2 px-1">
+                    Mo'ljal: <span className="font-semibold text-slate-700">{loc.landmark}</span>
+                  </div>
+                )}
+                {(loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt') && (
+                  <div className="flex justify-between items-center text-[9px] text-slate-600 mb-2 px-1">
+                     <span className="font-semibold shrink-0">Sig'imi:</span> <span className="font-bold text-slate-900 border-b border-dashed border-slate-300">{loc.capacity || '???'} o'rin</span>
+                  </div>
+                )}
+                {(loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt') && (
+                  <div className="flex justify-between items-center text-[9px] text-slate-600 mb-2 px-1">
+                     <span className="font-semibold shrink-0">Maydoni:</span> <span className="font-bold text-slate-900 border-b border-dashed border-slate-300">{loc.area || '???'} ga</span>
+                  </div>
+                )}
                 <div className="flex flex-col space-y-1.5 pt-1 border-t border-slate-100">
                   <button 
                     onClick={(e) => { e.stopPropagation(); handleMarkerClick(loc); }}
@@ -1437,7 +1774,16 @@ export default function MapComponent() {
           </div>
 
           <div className="flex items-center justify-between mb-4 shrink-0 hidden md:flex">
-            <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut</h2>
+            <div className="flex items-center space-x-2">
+              <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut</h2>
+              <button 
+                onClick={() => setIsBatchSelectModalOpen(true)}
+                className="ml-2 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-lg transition-colors border border-indigo-200 shadow-sm flex items-center"
+              >
+                <Sparkles className="w-3 h-3 mr-1" />
+                Tezkor tanlash
+              </button>
+            </div>
             <div className="flex space-x-2">
               {selectedLocations.length > 0 && (
                 <button onClick={handleClearRoute} className="w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center transition-colors border border-red-200" title="Tozalash">
@@ -1451,7 +1797,16 @@ export default function MapComponent() {
           </div>
           
           <div className="flex items-center justify-between mb-4 shrink-0 md:hidden">
-            <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut paneli</h2>
+            <div className="flex flex-col space-y-1">
+              <h2 className="font-extrabold text-xl text-slate-900 tracking-tight">Marshrut paneli</h2>
+              <button 
+                onClick={() => setIsBatchSelectModalOpen(true)}
+                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-lg transition-colors border border-indigo-200 shadow-sm flex items-center w-fit"
+              >
+                <Sparkles className="w-3 h-3 mr-1" />
+                Tezkor tanlash
+              </button>
+            </div>
             <div className="flex space-x-2">
               {selectedLocations.length > 0 && (
                 <button onClick={handleClearRoute} className="w-8 h-8 rounded-full bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center transition-colors border border-red-200" title="Tozalash">
@@ -1477,15 +1832,28 @@ export default function MapComponent() {
                   else if (loc.type === 'bogcha' || loc.type === 'dmtt') bgColor = 'bg-red-500';
                   else if (loc.type === 'boshqa' || loc.type === 'tashkilot') bgColor = 'bg-emerald-600';
 
+                  const isStart = idx === 0 && (!isStartMyLoc);
+
                   return (
                     <div 
                       key={loc.id} 
-                      onClick={(e) => removeLocation(e, loc.id)}
-                      className={`relative w-8 h-8 rounded-full text-white text-xs font-bold flex items-center justify-center shadow-md cursor-pointer group hover:bg-red-500 transition-colors border-2 border-white ${bgColor}`} 
-                      title={loc.name}
+                      className={`relative w-8 h-8 rounded-full text-white text-xs font-bold flex items-center justify-center shadow-md cursor-pointer group transition-colors border-2 ${isStart ? 'border-yellow-400 border-2 scale-110 shadow-xl z-20' : 'border-white'} ${bgColor}`} 
+                      title={`${loc.name}${isStart ? ' (Boshlang\'ich nuqta)' : ''}`}
                     >
-                      <span className="group-hover:hidden">{getShortLabelString(loc.name)}</span>
-                      <X className="w-4 h-4 hidden group-hover:block" />
+                      <span className="group-hover:hidden" onClick={() => {
+                        // Move this point to front (make it start point)
+                        if (idx !== 0) {
+                          const newLocations = [...selectedLocations];
+                          newLocations.splice(idx, 1);
+                          newLocations.unshift(loc);
+                          setSelectedLocations(newLocations);
+                          showToast(`${loc.name} boshlang'ich nuqta etib belgilandi`, 'success');
+                          setRouteGeometry(null);
+                          setRouteStats(null);
+                        }
+                      }}>{isStart ? 'S' : getShortLabelString(loc.name)}</span>
+                      <X className="w-4 h-4 hidden group-hover:block" onClick={(e) => removeLocation(e, loc.id)} />
+                      {isStart && <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full border-2 border-white pointer-events-none"></div>}
                     </div>
                   );
                 })}
@@ -1518,6 +1886,11 @@ export default function MapComponent() {
                      </span>
                   </div>
                </button>
+               {selectedLocations.length > 0 && !isStartMyLoc && (
+                 <p className="text-[10px] text-slate-500 italic px-1">
+                   * GPS orqali joylashuv kiritilmasa, ro'yxatdagi <strong className="text-slate-800">1-manzil</strong> boshlang'ich nuqta hisoblanadi. (Tartibni o'zgartirish uchun manzilga bosing)
+                 </p>
+               )}
             </div>
 
             <div className="flex space-x-2">
@@ -1579,14 +1952,18 @@ export default function MapComponent() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
                 <Route className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Marshrut Ma'lumotlari</h3>
+                <div>
+                  <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Marshrut Ma'lumotlari</h3>
+                  <p className="text-[9px] text-slate-500 font-medium leading-tight">Chop etilganda panellar yashiriladi</p>
+                </div>
               </div>
               <button 
                 onClick={() => window.print()}
-                className="w-8 h-8 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full transition-colors"
+                className="w-10 h-10 flex flex-col items-center justify-center bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-xl transition-all shadow-sm active:scale-95 group"
                 title="Smetani chop etish"
               >
-                <Printer className="w-4 h-4" />
+                <Printer className="w-4 h-4 ml-0.5" />
+                <span className="text-[8px] font-bold mt-0.5 uppercase tracking-wider group-hover:text-indigo-600 text-slate-500">PDF</span>
               </button>
             </div>
             
@@ -1610,6 +1987,29 @@ export default function MapComponent() {
                 </div>
               </div>
             </div>
+
+            {routeStats.routes && routeStats.routes.length > 0 && (
+              <div className="mt-4 space-y-3">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 border-b border-slate-100 pb-1">Tafsilotlar</h4>
+                {routeStats.routes.map((route: any, index: number) => (
+                  <div key={index} className="p-3 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col gap-2 relative overflow-hidden group">
+                    <div className="absolute top-0 left-0 bottom-0 w-1 opacity-80" style={{backgroundColor: route.color}}></div>
+                    <div className="flex items-center justify-between pl-2">
+                       <div className="flex items-center space-x-2">
+                          <span className="font-extrabold text-xs text-slate-800 tracking-tight" style={{color: route.color}}>Marshrut #{index + 1}</span>
+                       </div>
+                       <span className="text-[10px] font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100">
+                          {route.locations.length} manzil
+                       </span>
+                    </div>
+                    <div className="flex justify-between text-[11px] font-semibold text-slate-500 pl-2">
+                       <span className="flex items-center"><MapIcon className="w-3 h-3 mr-1" /> {(route.distance / 1000).toFixed(1)} km</span>
+                       <span className="flex items-center"><Clock className="w-3 h-3 mr-1" /> {Math.round(route.duration / 60)} daq</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1647,24 +2047,36 @@ export default function MapComponent() {
             </div>
           </div>
 
-          <table className="w-full text-sm border-collapse border border-slate-800 mb-8">
-            <thead>
-              <tr className="bg-slate-100">
-                <th className="border border-slate-800 py-2 px-3 text-center w-12 font-bold uppercase text-[10px]">№</th>
-                <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Muassasa nomi</th>
-                <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Turi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {selectedLocations.map((loc, i) => (
-                <tr key={loc.id}>
-                  <td className="border border-slate-800 py-1.5 px-3 text-center">{i + 1}</td>
-                  <td className="border border-slate-800 py-1.5 px-3 font-medium">{loc.name}</td>
-                  <td className="border border-slate-800 py-1.5 px-3 uppercase text-[10px] text-slate-600">{loc.type}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {routeStats.routes && routeStats.routes.map((route: any, routeIndex: number) => (
+            <div key={routeIndex} className="mb-8 break-inside-avoid">
+              <h3 className="font-extrabold text-lg mb-3 flex items-center space-x-2" style={{color: route.color}}>
+                 <span className="w-4 h-4 rounded-full" style={{backgroundColor: route.color}}></span>
+                 <span>Marshrut #{routeIndex + 1} - Uzunligi: {(route.distance / 1000).toFixed(1)} km, Vaqti: {Math.round(route.duration / 60)} daqiqa</span>
+              </h3>
+              <table className="w-full text-sm border-collapse border border-slate-800">
+                <thead>
+                  <tr className="bg-slate-100">
+                    <th className="border border-slate-800 py-2 px-3 text-center w-12 font-bold uppercase text-[10px]">№</th>
+                    <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Muassasa nomi</th>
+                    <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Mo'ljal</th>
+                    <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Turi</th>
+                    <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Sig'imi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {route.locations.map((loc: any, i: number) => (
+                    <tr key={loc.id}>
+                      <td className="border border-slate-800 py-1.5 px-3 text-center">{i + 1}</td>
+                      <td className="border border-slate-800 py-1.5 px-3 font-medium">{loc.name}</td>
+                      <td className="border border-slate-800 py-1.5 px-3 font-medium text-[10px] italic">{loc.landmark || '-'}</td>
+                      <td className="border border-slate-800 py-1.5 px-3 uppercase text-[10px] text-slate-600">{loc.type}</td>
+                      <td className="border border-slate-800 py-1.5 px-3 text-[10px] text-slate-600">{loc.capacity ? `${loc.capacity} o'rin` : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
 
           <div className="mb-16 border-2 border-slate-900 rounded-xl p-5 bg-slate-50 w-full max-w-2xl mx-auto">
             <h4 className="font-black border-b-2 border-slate-900 pb-2 mb-4 uppercase text-sm tracking-widest text-center">Tasdiqlangan Marshrut Ma'lumotlari</h4>
