@@ -70,8 +70,6 @@ export default function MapComponent() {
   const [multiRouteGeometries, setMultiRouteGeometries] = useState<{coords: [number, number][], color: string}[] | null>(null);
   const [vehiclesCount, setVehiclesCount] = useState<number>(1);
   const [isRoundtrip, setIsRoundtrip] = useState<boolean>(false);
-  const [isStartMyLoc, setIsStartMyLoc] = useState<boolean>(false);
-  const [isEndMyLoc, setIsEndMyLoc] = useState<boolean>(false);
   const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(false);
   const [routeStats, setRouteStats] = useState<any>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -306,61 +304,26 @@ export default function MapComponent() {
     );
   };
 
-  const handleCycleMyLocation = () => {
-    if (!isStartMyLoc && !isEndMyLoc) {
-       handleToggleStartMyLoc(true);
-    } else if (isStartMyLoc && !isEndMyLoc) {
-       handleToggleEndMyLoc(true);
-    } else {
-       handleToggleStartMyLoc(false);
-       handleToggleEndMyLoc(false);
-    }
-  };
-
-  const handleToggleStartMyLoc = (checked: boolean) => {
-    if (checked) {
-       if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
-       showToast("Joylashuv aniqlanmoqda...", "info");
-       navigator.geolocation.getCurrentPosition(
-         pos => {
-           const loc: Location = { id: 'user-gps-start', name: "📍 Mening joylashuvim (Boshlang'ich)", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
-           setSelectedLocations(prev => [loc, ...prev.filter(l => l.id !== 'user-gps-start')]);
-           setIsStartMyLoc(true);
-           showToast("Joylashuvingiz marshrut boshiga qo'shildi", "success");
-         },
-         err => {
-           console.error("GPS Error:", err);
-           showToast("GPS xatosi. Iltimos, ilovani yangi oynada oching yoki ruxsat bering.", "error");
-         },
-         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-       );
-    } else {
-       setSelectedLocations(prev => prev.filter(l => l.id !== 'user-gps-start'));
-       setIsStartMyLoc(false);
-    }
-  };
-
-  const handleToggleEndMyLoc = (checked: boolean) => {
-    if (checked) {
-       if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
-       showToast("Joylashuv aniqlanmoqda...", "info");
-       navigator.geolocation.getCurrentPosition(
-         pos => {
-           const loc: Location = { id: 'user-gps-end', name: "🏁 Mening joylashuvim (Yakuniy)", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
-           setSelectedLocations(prev => [...prev.filter(l => l.id !== 'user-gps-end'), loc]);
-           setIsEndMyLoc(true);
-           showToast("Joylashuvingiz marshrut oxiriga qo'shildi", "success");
-         },
-         err => {
-           console.error("GPS Error:", err);
-           showToast("GPS xatosi. Iltimos, ilovani yangi oynada oching yoki ruxsat bering.", "error");
-         },
-         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-       );
-    } else {
-       setSelectedLocations(prev => prev.filter(l => l.id !== 'user-gps-end'));
-       setIsEndMyLoc(false);
-    }
+  const handleAddGPSPoint = () => {
+    if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
+    showToast("Joylashuv aniqlanmoqda...", "info");
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const customId = `gps-${Date.now()}`;
+        const loc: Location = { id: customId, name: "📍 Mening joylashuvim", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setSelectedLocations(prev => {
+          // If the user already has a GPS point, maybe warn them or replace it? 
+          // It's fine to add multiple for now, or just prepend to the start
+          return [loc, ...prev];
+        });
+        showToast("Joylashuvingiz ro'yxat boshiga qo'shildi", "success");
+      },
+      err => {
+        console.error("GPS Error:", err);
+        showToast("GPS xatosi. Ilovani yangi oynada oching yoki ruxsat bering.", "error");
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
   };
 
   const handleAddLocation = async (e: React.FormEvent) => {
@@ -673,8 +636,6 @@ export default function MapComponent() {
 
   const handleClearRoute = () => {
     setSelectedLocations([]);
-    setIsStartMyLoc(false);
-    setIsEndMyLoc(false);
     setRouteGeometry(null);
     setRouteStats(null);
   };
@@ -682,8 +643,6 @@ export default function MapComponent() {
   const removeLocation = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setSelectedLocations(selectedLocations.filter(l => l.id !== id));
-    if (id === 'user-gps-start') setIsStartMyLoc(false);
-    if (id === 'user-gps-end') setIsEndMyLoc(false);
     setRouteGeometry(null);
     setRouteStats(null);
   };
@@ -1050,14 +1009,30 @@ export default function MapComponent() {
 
       {/* Zoom Control Position fix is above in MapContainer */}
 
-      {/* Primary Action Buttons On Map */}
-      <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-3`}>
+      {/* Floating Map Navigation Tools */}
+      <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-3 items-start`}>
         <button
-          onClick={() => setIsPickingRoutePoint(true)}
-          title="Xaritadan nuqta marshrutga qo'shish"
-          className="bg-white/95 backdrop-blur-md hover:bg-slate-50 text-slate-800 p-3 md:p-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 group"
+           onClick={handleAddGPSPoint}
+           title="Joylashuvimni topish va marshrut boshiga qo'shish"
+           className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group"
         >
-          <MousePointer2 className="w-5 h-5 md:w-6 md:h-6 text-emerald-600 group-hover:text-emerald-700 transition-colors" />
+           <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors shrink-0">
+               <LocateFixed className="w-4 h-4 md:w-4 md:h-4 text-blue-600 group-hover:text-blue-700 transition-colors" />
+           </div>
+           <span className="font-bold text-xs md:text-sm tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight hidden sm:block">GPS nuqta<br/><span className="text-[9px] md:text-[10px] font-normal text-slate-500">marshrutga qo'shish</span></span>
+           <span className="font-bold text-[11px] tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight block sm:hidden">GPS nuqta</span>
+        </button>
+        <button
+           onClick={() => setIsPickingRoutePoint(!isPickingRoutePoint)}
+           title="Xaritadan ixtiyoriy nuqtani marshrutga qo'shish"
+           className={`bg-white/95 backdrop-blur-md text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group ${isPickingRoutePoint ? 'bg-emerald-50 border-emerald-200' : 'hover:bg-white'}`}
+        >
+           <div className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-colors shrink-0 ${isPickingRoutePoint ? 'bg-emerald-100' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
+               <MousePointer2 className={`w-4 h-4 md:w-4 md:h-4 transition-colors ${isPickingRoutePoint ? 'text-emerald-600' : 'text-emerald-600 group-hover:text-emerald-700'}`} />
+           </div>
+           
+           <span className="font-bold text-xs md:text-sm tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight hidden sm:block">Xaritadan nuqta<br/><span className="text-[9px] md:text-[10px] font-normal text-slate-500">marshrutga qo'shish</span></span>
+           <span className="font-bold text-[11px] tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight block sm:hidden">Xaritadan</span>
         </button>
       </div>
 
@@ -1849,7 +1824,7 @@ export default function MapComponent() {
                   else if (loc.type === 'bogcha' || loc.type === 'dmtt') bgColor = 'bg-red-500';
                   else if (loc.type === 'boshqa' || loc.type === 'tashkilot') bgColor = 'bg-emerald-600';
 
-                  const isStart = idx === 0 && (!isStartMyLoc);
+                  const isStart = idx === 0;
 
                   return (
                     <div 
@@ -1891,24 +1866,11 @@ export default function MapComponent() {
               </label>
             )}
             
-            <div className="flex flex-col space-y-2 mb-4">
-               <button 
-                 onClick={handleCycleMyLocation}
-                 className={`flex items-center justify-between p-3 rounded-xl border transition-colors shadow-sm ${(!isStartMyLoc && !isEndMyLoc) ? 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100' : (isStartMyLoc && !isEndMyLoc) ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}`}
-               >
-                  <div className="flex items-center space-x-2">
-                     <span className="text-lg">{(!isStartMyLoc && !isEndMyLoc) ? '📍' : (isStartMyLoc && !isEndMyLoc) ? '📍' : '🔄'}</span>
-                     <span className="text-[13px] font-bold">
-                       {(!isStartMyLoc && !isEndMyLoc) ? 'Joylashuvimni marshrutga qo\'shish' : (isStartMyLoc && !isEndMyLoc) ? '📍 Faqat boshlang\'ich nuqta' : '🔄 Boshlang\'ich va Yakuniy nuqta'}
-                     </span>
-                  </div>
-               </button>
-               {selectedLocations.length > 0 && !isStartMyLoc && (
-                 <p className="text-[10px] text-slate-500 italic px-1">
-                   * GPS orqali joylashuv kiritilmasa, ro'yxatdagi <strong className="text-slate-800">1-manzil</strong> boshlang'ich nuqta hisoblanadi. (Tartibni o'zgartirish uchun manzilga bosing)
-                 </p>
-               )}
-            </div>
+            {selectedLocations.length > 0 && (
+               <p className="text-[10px] text-slate-500 italic px-1 mb-2">
+                 * Ro'yxatdagi <strong className="text-slate-800">1-manzil</strong> mudom boshlang'ich nuqta hisoblanadi. (O'zgartirish uchun kerakli nuqtaga bosing)
+               </p>
+            )}
 
             <div className="flex space-x-2">
               <button 
