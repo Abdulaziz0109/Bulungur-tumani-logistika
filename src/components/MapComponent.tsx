@@ -277,6 +277,7 @@ export default function MapComponent() {
     }
     
     // Set a loading toast if needed, or simply let the browser ask for permission
+    showToast("📍 Joylashuv aniqlanmoqda...", 'info');
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const lat = position.coords.latitude;
@@ -292,14 +293,14 @@ export default function MapComponent() {
       (error) => {
         console.error("GPS Error:", error);
         if (error.code === error.PERMISSION_DENIED) {
-           showToast('Joylashuvni aniqlashga ruxsat berilmadi.', 'error');
+           showToast("Siz joylashuv aniqlashga ruxsat bermadingiz. Ilovani yangi oynada (New Tab) ochib ko'ring.", 'error');
         } else {
-           showToast('Joylashuvni aniqlashda xatolik yuz berdi.', 'error');
+           showToast("GPS xatosi yoki signal zaif. Telefondan joylashuvni yoqing.", 'error');
         }
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 15000,
         maximumAge: 0
       }
     );
@@ -319,12 +320,20 @@ export default function MapComponent() {
   const handleToggleStartMyLoc = (checked: boolean) => {
     if (checked) {
        if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
-       navigator.geolocation.getCurrentPosition(pos => {
+       showToast("Joylashuv aniqlanmoqda...", "info");
+       navigator.geolocation.getCurrentPosition(
+         pos => {
            const loc: Location = { id: 'user-gps-start', name: "📍 Mening joylashuvim (Boshlang'ich)", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
            setSelectedLocations(prev => [loc, ...prev.filter(l => l.id !== 'user-gps-start')]);
            setIsStartMyLoc(true);
            showToast("Joylashuvingiz marshrut boshiga qo'shildi", "success");
-       });
+         },
+         err => {
+           console.error("GPS Error:", err);
+           showToast("GPS xatosi. Iltimos, ilovani yangi oynada oching yoki ruxsat bering.", "error");
+         },
+         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+       );
     } else {
        setSelectedLocations(prev => prev.filter(l => l.id !== 'user-gps-start'));
        setIsStartMyLoc(false);
@@ -334,12 +343,20 @@ export default function MapComponent() {
   const handleToggleEndMyLoc = (checked: boolean) => {
     if (checked) {
        if (!navigator.geolocation) { showToast("Brauzoringizda GPS yo'q", "error"); return; }
-       navigator.geolocation.getCurrentPosition(pos => {
+       showToast("Joylashuv aniqlanmoqda...", "info");
+       navigator.geolocation.getCurrentPosition(
+         pos => {
            const loc: Location = { id: 'user-gps-end', name: "🏁 Mening joylashuvim (Yakuniy)", type: 'boshqa', lat: pos.coords.latitude, lng: pos.coords.longitude };
            setSelectedLocations(prev => [...prev.filter(l => l.id !== 'user-gps-end'), loc]);
            setIsEndMyLoc(true);
            showToast("Joylashuvingiz marshrut oxiriga qo'shildi", "success");
-       });
+         },
+         err => {
+           console.error("GPS Error:", err);
+           showToast("GPS xatosi. Iltimos, ilovani yangi oynada oching yoki ruxsat bering.", "error");
+         },
+         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+       );
     } else {
        setSelectedLocations(prev => prev.filter(l => l.id !== 'user-gps-end'));
        setIsEndMyLoc(false);
@@ -1819,7 +1836,7 @@ export default function MapComponent() {
             </div>
           </div>
           
-          <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200">
+          <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 min-h-[150px]">
             {selectedLocations.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-400">
                 <p className="text-sm">Xaritadan manzillarni tanlang</p>
@@ -1948,7 +1965,7 @@ export default function MapComponent() {
 
         {/* Economist / Analytics Panel */}
         {routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[55vh] md:max-h-[calc(100vh-120px)] overscroll-contain block">
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[55vh] md:max-h-[50vh] overscroll-contain block">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
                 <Route className="w-5 h-5 text-indigo-600" />
