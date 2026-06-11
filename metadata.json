@@ -2,5 +2,5 @@
   "name": "Web & Telegram Bot Platform",
   "description": "A customized web application integrated with a Telegram bot.",
   "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

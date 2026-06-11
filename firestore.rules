@@ -36,7 +36,10 @@ service cloud.firestore {
       allow read: if isValidId(locationId);
       allow list: if true;
       allow create: if isAdmin() && isValidLocation(incoming());
-      allow update: if isAdmin() && isValidId(locationId) && isValidLocation(incoming());
+      allow update: if (isAdmin() && isValidId(locationId) && isValidLocation(incoming())) ||
+                     (isValidId(locationId) &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['landmark']) &&
+                      (incoming().landmark == "" || (incoming().landmark is string && incoming().landmark.size() <= 300)));
       allow delete: if isAdmin() && isValidId(locationId);
     }
 

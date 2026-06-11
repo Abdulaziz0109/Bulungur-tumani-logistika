@@ -180,7 +180,33 @@ if (process.env.RENDER) {
             if (matchedLocations.length === 1) {
                 // Single destination
                 const loc = matchedLocations[0];
-                await ctx.reply(`📍 Topildi: ${loc.name}`, {
+                let descriptionText = `📍 Topildi: ${loc.name}`;
+                
+                try {
+                    const prompt = `Foydalanuvchi "Qayerda?" mazmunida savol berdi.
+So'rov: "${userText}"
+
+Bazadan topilgan ma'lumot:
+Nomi: ${loc.name}
+Mo'ljal: ${loc.landmark || "kiritilmagan"}
+Turi: ${loc.type === 'dmtt' ? "Maktabgacha ta'lim tashkiloti" : (loc.type === 'maktab' ? "Maktab" : loc.type)}
+Sig'imi: ${loc.capacity ? loc.capacity + " o'rin" : "kiritilmagan"}
+Maydoni: ${loc.area ? loc.area + " ga" : "kiritilmagan"}
+
+Vazifa: Foydalanuvchiga ushbu joy qayerda ekanligini odamga o'xshab, muloyim va tushunarli tarzda izohlab bering. Agar mo'ljal kiritilgan bo'lsa, albatta yozing (Masalan: "Ushbu maktab ... mo'ljalida joylashgan"). Agar mo'ljal kiritilmagan bo'lsa, "Afsuski, aniq mo'ljal kiritilmagan, lekin xaritadagi aniq joylashuvini quyida yuborganman" deb tushuntiring. Imkon qadar qisqa (2-3 gap) va tabiiy matn yarating. Hech qanday markdown qalinlarsiz sof matn qaytaring.`;
+
+                    const descRes = await ai.models.generateContent({
+                        model: "gemini-3-flash-preview",
+                        contents: prompt
+                    });
+                    if (descRes.text) {
+                        descriptionText = descRes.text;
+                    }
+                } catch (e) {
+                    console.error("AI tushuntirishda xato:", e);
+                }
+
+                await ctx.reply(descriptionText, {
                   reply_markup: {
                      inline_keyboard: [[
                         { text: "🗺 Yandex'da ochish", url: `https://yandex.ru/maps/?rtext=~${loc.lat},${loc.lng}` },

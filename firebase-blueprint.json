@@ -9,6 +9,11 @@
         "type": { "type": "string" },
         "lat": { "type": "number" },
         "lng": { "type": "number" },
+        "mahalla": { "type": "string" },
+        "capacity": { "type": "number" },
+        "area": { "type": "number" },
+        "landmark": { "type": "string" },
+        "cadastre": { "type": "string" },
         "createdAt": { "type": "string" }
       },
       "required": ["name", "type", "lat", "lng"]

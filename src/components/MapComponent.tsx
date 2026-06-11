@@ -46,6 +46,8 @@ interface Location {
   capacity?: number;
   area?: number;
   landmark?: string;
+  mahalla?: string;
+  cadastre?: string;
 }
 
 function Toggle({ label, checked, onChange, color = "bg-blue-600" }: { label: string, checked: boolean, onChange: (v: boolean) => void, color?: string }) {
@@ -90,11 +92,14 @@ export default function MapComponent() {
   const [newLocCapacity, setNewLocCapacity] = useState<number | ''>('');
   const [newLocArea, setNewLocArea] = useState<number | ''>('');
   const [newLocLandmark, setNewLocLandmark] = useState<string>('');
+  const [newLocMahalla, setNewLocMahalla] = useState<string>('');
+  const [newLocCadastre, setNewLocCadastre] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [toastMessage, setToastMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null);
+  const [toastMessage, setToastMessage] = useState<{text: string, type: 'success' | 'error' | 'info'} | null>(null);
 
   // Settings & Filters
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [mapSource, setMapSource] = useState<'osm' | 'google' | 'google_sat' | 'yandex'>('osm');
   const [filters, setFilters] = useState({ schools: true, kindergartens: true, others: true });
   const [layers, setLayers] = useState({ district: true, neighborhoods: false, highways: false });
   const [highwaysData, setHighwaysData] = useState<any>(null);
@@ -104,6 +109,11 @@ export default function MapComponent() {
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
+
+  // Landmark in-place editing states
+  const [editingLandmarkId, setEditingLandmarkId] = useState<string | null>(null);
+  const [tempLandmark, setTempLandmark] = useState<string>('');
+  const [isModerating, setIsModerating] = useState<boolean>(false);
   
   const [isBatchSelectModalOpen, setIsBatchSelectModalOpen] = useState(false);
   const [batchSearchQuery, setBatchSearchQuery] = useState('');
@@ -147,7 +157,12 @@ export default function MapComponent() {
   const handleSearch = (q: string) => {
     setSearchQuery(q);
     if (q.trim().length > 0) {
-      const res = filteredLocations.filter(l => l.name.toLowerCase().includes(q.toLowerCase()));
+      const queryLower = q.toLowerCase();
+      const res = filteredLocations.filter(l => 
+        l.name.toLowerCase().includes(queryLower) ||
+        (l.landmark && l.landmark.toLowerCase().includes(queryLower)) ||
+        (l.mahalla && l.mahalla.toLowerCase().includes(queryLower))
+      );
       setSearchResults(res.slice(0, 6));
     } else {
       setSearchResults([]);
@@ -249,6 +264,21 @@ export default function MapComponent() {
           
           showToast(`${radiusKm} km radiusda: ${schools} ta maktab, ${kindergartens} ta bog'cha${others > 0 ? `, ${others} ta boshqa` : ''} bor`, 'success');
         }
+      },
+      dblclick(e) {
+        const lat = parseFloat(e.latlng.lat.toFixed(6));
+        const lng = parseFloat(e.latlng.lng.toFixed(6));
+        const customLocation: Location = {
+          id: `custom-${Date.now()}`,
+          name: `📍 Xaritadan belgilangan nuqta`,
+          type: 'boshqa',
+          lat: lat,
+          lng: lng
+        };
+        setSelectedLocations(prev => {
+          return [...prev, customLocation];
+        });
+        showToast("Xaritadan nuqta marshrutga qo'shildi!", "success");
       }
     });
 
@@ -263,7 +293,7 @@ export default function MapComponent() {
     return null;
   }
 
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3000);
   };
@@ -328,6 +358,40 @@ export default function MapComponent() {
     );
   };
 
+  const handleAddGPSToStart = () => {
+    if (!navigator.geolocation) { 
+      showToast("Brauzeringizda GPS ko'rsatkich qo'llab-quvvatlanmaydi", "error"); 
+      return; 
+    }
+    showToast("📍 Joylashuvingiz aniqlanmoqda...", "info");
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const customId = `gps-${Date.now()}`;
+        const loc: Location = { 
+          id: customId, 
+          name: "📍 Mening joylashuvim", 
+          type: 'boshqa', 
+          lat: pos.coords.latitude, 
+          lng: pos.coords.longitude 
+        };
+        setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+        setSelectedLocations(prev => {
+          const cleanPrev = prev.filter(item => !item.id.startsWith('gps-') && item.name !== "📍 Mening joylashuvim");
+          return [loc, ...cleanPrev];
+        });
+        showToast("Joylashuvingiz marshrut boshiga qo'shildi", "success");
+        if (mapRef.current) {
+          mapRef.current.flyTo([pos.coords.latitude, pos.coords.longitude], 15);
+        }
+      },
+      err => {
+        console.error("GPS Error:", err);
+        showToast("GPS aniqlashda xatolik yuz berdi. Ilovani yangi oynada oching yoki GPS ruxsatini bering.", "error");
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
   const handleAddLocation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -347,6 +411,8 @@ export default function MapComponent() {
       if (newLocCapacity !== '') locationData.capacity = Number(newLocCapacity);
       if (newLocArea !== '') locationData.area = Number(newLocArea);
       if (newLocLandmark.trim() !== '') locationData.landmark = newLocLandmark.trim();
+      if (newLocMahalla.trim() !== '') locationData.mahalla = newLocMahalla.trim();
+      if (newLocCadastre.trim() !== '') locationData.cadastre = newLocCadastre.trim();
 
       if (role === 'admin') {
         await addDoc(collection(db, 'locations'), locationData);
@@ -366,6 +432,11 @@ export default function MapComponent() {
       setNewLocType('maktab');
       setNewLocLat('');
       setNewLocLng('');
+      setNewLocCapacity('');
+      setNewLocArea('');
+      setNewLocLandmark('');
+      setNewLocMahalla('');
+      setNewLocCadastre('');
       setIsAddModalOpen(false);
       
       fetchLocations();
@@ -396,6 +467,8 @@ export default function MapComponent() {
       if (newLocCapacity !== '') locationData.capacity = Number(newLocCapacity);
       if (newLocArea !== '') locationData.area = Number(newLocArea);
       if (newLocLandmark.trim() !== '') locationData.landmark = newLocLandmark.trim();
+      locationData.mahalla = newLocMahalla.trim();
+      locationData.cadastre = newLocCadastre.trim();
 
       if (role === 'admin') {
         // Direct update for admin
@@ -437,7 +510,65 @@ export default function MapComponent() {
     setNewLocCapacity(loc.capacity || '');
     setNewLocArea(loc.area || '');
     setNewLocLandmark(loc.landmark || '');
+    setNewLocMahalla(loc.mahalla || '');
+    setNewLocCadastre(loc.cadastre || '');
     setIsEditModalOpen(true);
+  };
+
+  const startEditingLandmark = (loc: Location) => {
+    setEditingLandmarkId(loc.id);
+    setTempLandmark(loc.landmark || '');
+  };
+
+  const saveLandmark = async (loc: Location) => {
+    setIsModerating(true);
+    try {
+      const textToCheck = tempLandmark.trim();
+      if (!textToCheck) {
+        const { updateDoc, doc: fDoc } = await import('firebase/firestore');
+        const docRef = fDoc(db, 'locations', loc.id);
+        await updateDoc(docRef, { landmark: "" });
+        showToast("Mo'ljal muvaffaqiyatli o'chirildi!", "success");
+        setEditingLandmarkId(null);
+        fetchLocations();
+        return;
+      }
+
+      // Call AI server moderation
+      const response = await fetch("/api/moderate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: textToCheck })
+      });
+
+      if (!response.ok) {
+        throw new Error("AI tekshiruvida xatolik");
+      }
+
+      const result = await response.json();
+
+      const { updateDoc, doc: fDoc } = await import('firebase/firestore');
+      const docRef = fDoc(db, 'locations', loc.id);
+
+      if (result.isValid === false) {
+        // Unacceptable! Clear/delete it to satisfy "o'chirib tashlasin"
+        await updateDoc(docRef, { landmark: "" });
+        showToast("⚠️ AI taqiqi: Nomaqbul yoki behayo so'zlar aniqlandi! O'chirib tashlandi.", "error");
+        setEditingLandmarkId(null);
+        fetchLocations();
+      } else {
+        // Safe landmark: save
+        await updateDoc(docRef, { landmark: textToCheck });
+        showToast("Mo'ljal muvaffaqiyatli o'zgartirildi!", "success");
+        setEditingLandmarkId(null);
+        fetchLocations();
+      }
+    } catch (err) {
+      console.error("error:", err);
+      showToast("Xatolik yuz berdi. Iltimos keyinroq urinib ko'ring.", "error");
+    } finally {
+      setIsModerating(false);
+    }
   };
 
   const handleDeleteLocation = async (id: string | undefined) => {
@@ -958,8 +1089,16 @@ export default function MapComponent() {
                 onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
                 className="w-full text-left px-5 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col"
               >
-                <span className="font-bold text-slate-800 text-sm">{res.name}</span>
-                <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mt-0.5">{res.type === 'dmtt' ? "Bog'cha" : res.type}</span>
+                <span className="font-bold text-slate-800 text-sm leading-tight">{res.name}</span>
+                <div className="flex items-center space-x-2 mt-1">
+                  <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
+                  {res.mahalla && (
+                    <>
+                      <span className="w-1 h-1 rounded-full bg-slate-200"></span>
+                      <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
+                    </>
+                  )}
+                </div>
               </button>
             ))}
           </div>
@@ -968,7 +1107,7 @@ export default function MapComponent() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className={`print:hidden absolute bottom-36 md:bottom-24 left-1/2 transform -translate-x-1/2 md:left-6 md:translate-x-0 z-[600] px-4 md:px-6 py-2 md:py-3 rounded-xl text-xs md:text-sm font-bold shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 ${toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+        <div className={`print:hidden absolute bottom-36 md:bottom-24 left-1/2 transform -translate-x-1/2 md:left-6 md:translate-x-0 z-[600] px-4 md:px-6 py-2 md:py-3 rounded-xl text-xs md:text-sm font-bold shadow-2xl transition-all animate-in fade-in slide-in-from-bottom-4 ${toastMessage.type === 'success' ? 'bg-green-500 text-white' : toastMessage.type === 'info' ? 'bg-slate-800 text-white' : 'bg-red-500 text-white'}`}>
           {toastMessage.text}
         </div>
       )}
@@ -1009,32 +1148,18 @@ export default function MapComponent() {
         </button>
       )}
 
-      {/* Zoom Control Position fix is above in MapContainer */}
-
       {/* Floating Map Navigation Tools */}
       <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-3 items-start`}>
         <button
-           onClick={handleAddGPSPoint}
-           title="Joylashuvimni topish va marshrut boshiga qo'shish"
+           onClick={handleGetLocation}
+           title="Mening joylashuvimni aniqlash va xaritada ko'rsatish"
            className="bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group"
         >
            <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors shrink-0">
                <LocateFixed className="w-4 h-4 md:w-4 md:h-4 text-blue-600 group-hover:text-blue-700 transition-colors" />
            </div>
-           <span className="font-bold text-xs md:text-sm tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight hidden sm:block">GPS nuqta<br/><span className="text-[9px] md:text-[10px] font-normal text-slate-500">marshrutga qo'shish</span></span>
-           <span className="font-bold text-[11px] tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight block sm:hidden">GPS nuqta</span>
-        </button>
-        <button
-           onClick={() => setIsPickingRoutePoint(!isPickingRoutePoint)}
-           title="Xaritadan ixtiyoriy nuqtani marshrutga qo'shish"
-           className={`bg-white/95 backdrop-blur-md text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group ${isPickingRoutePoint ? 'bg-emerald-50 border-emerald-200' : 'hover:bg-white'}`}
-        >
-           <div className={`w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center transition-colors shrink-0 ${isPickingRoutePoint ? 'bg-emerald-100' : 'bg-emerald-50 group-hover:bg-emerald-100'}`}>
-               <MousePointer2 className={`w-4 h-4 md:w-4 md:h-4 transition-colors ${isPickingRoutePoint ? 'text-emerald-600' : 'text-emerald-600 group-hover:text-emerald-700'}`} />
-           </div>
-           
-           <span className="font-bold text-xs md:text-sm tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight hidden sm:block">Xaritadan nuqta<br/><span className="text-[9px] md:text-[10px] font-normal text-slate-500">marshrutga qo'shish</span></span>
-           <span className="font-bold text-[11px] tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight block sm:hidden">Xaritadan</span>
+           <span className="font-bold text-xs md:text-sm tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight hidden sm:block font-sans">Joylashuvni aniqlash<br/><span className="text-[9px] md:text-[10px] font-normal text-slate-500">xaritadan topish</span></span>
+           <span className="font-bold text-[11px] tracking-tight text-slate-700 group-hover:text-slate-900 text-left leading-tight block sm:hidden">Joylashuv</span>
         </button>
       </div>
 
@@ -1082,6 +1207,28 @@ export default function MapComponent() {
                   onChange={(e) => setNewLocLandmark(e.target.value)}
                   placeholder="Masalan: Katta bozor yonida" 
                   className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Mahalla (MFY)</label>
+                <input 
+                  type="text" 
+                  value={newLocMahalla}
+                  onChange={(e) => setNewLocMahalla(e.target.value)}
+                  placeholder="Masalan: Navbahor MFY" 
+                  className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Kadastr raqami</label>
+                <input 
+                  type="text" 
+                  value={newLocCadastre}
+                  onChange={(e) => setNewLocCadastre(e.target.value)}
+                  placeholder="Masalan: 18:03:02:01:04:0012" 
+                  className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm font-mono font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
                 />
               </div>
 
@@ -1230,6 +1377,37 @@ export default function MapComponent() {
                 </button>
              </div>
              <div className="p-6 space-y-6 overflow-y-auto">
+                {/* Map Type Switcher */}
+                <div>
+                   <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><MapIcon className="w-3 h-3 mr-1.5"/> Xarita Ko'rinishi</h3>
+                   <div className="grid grid-cols-2 gap-2">
+                      <button 
+                         onClick={() => setMapSource('osm')}
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${mapSource === 'osm' ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                         OpenStreetMap
+                      </button>
+                      <button 
+                         onClick={() => setMapSource('google')}
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${mapSource === 'google' ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                         Google Maps
+                      </button>
+                      <button 
+                         onClick={() => setMapSource('google_sat')}
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${mapSource === 'google_sat' ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                         Google Sun'iy yo'ldosh
+                      </button>
+                      <button 
+                         onClick={() => setMapSource('yandex')}
+                         className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${mapSource === 'yandex' ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                         Yandex Maps
+                      </button>
+                   </div>
+                </div>
+
                 {/* Radius Analysis */}
                 <div>
                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center"><Target className="w-3 h-3 mr-1.5"/> Radius Analizi (Qamrov)</h3>
@@ -1504,7 +1682,9 @@ export default function MapComponent() {
                             if (batchTypeFilter === 'boshqa' && (loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt')) return false;
                             if (batchSearchQuery) {
                               const q = batchSearchQuery.toLowerCase();
-                              return loc.name.toLowerCase().includes(q) || (loc.landmark && loc.landmark.toLowerCase().includes(q));
+                              return loc.name.toLowerCase().includes(q) || 
+                                     (loc.landmark && loc.landmark.toLowerCase().includes(q)) ||
+                                     (loc.mahalla && loc.mahalla.toLowerCase().includes(q));
                             }
                             return true;
                           })
@@ -1524,7 +1704,7 @@ export default function MapComponent() {
                                   isSelected 
                                     ? 'bg-indigo-50 border-indigo-300 shadow-sm' 
                                     : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                                }`}
+                                  }`}
                               >
                                 <div className={`w-5 h-5 rounded border mt-0.5 flex items-center justify-center shrink-0 transition-colors ${
                                   isSelected ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'
@@ -1533,15 +1713,17 @@ export default function MapComponent() {
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="font-bold text-sm text-slate-800 tracking-tight truncate" title={loc.name}>{loc.name}</div>
-                                  <div className="flex items-center space-x-2 mt-1">
+                                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
                                     <span className="text-[10px] font-bold text-slate-500 uppercase">
-                                      {loc.type === 'dmtt' ? 'Bog\'cha' : loc.type}
+                                      {loc.type === 'dmtt' ? 'Bog\'cha' : loc.type === 'maktab' ? 'Maktab' : 'Boshqa'}
                                     </span>
+                                    {loc.mahalla && (
+                                      <span className="text-[9px] font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-1 rounded">
+                                        {loc.mahalla}
+                                      </span>
+                                    )}
                                     {loc.landmark && (
-                                      <>
-                                        <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                                        <span className="text-[10px] text-slate-500 italic truncate" title={loc.landmark}>{loc.landmark}</span>
-                                      </>
+                                      <span className="text-[10px] text-slate-400 italic truncate max-w-[120px]" title={loc.landmark}>• {loc.landmark}</span>
                                     )}
                                   </div>
                                 </div>
@@ -1582,12 +1764,33 @@ export default function MapComponent() {
         className="w-full h-screen z-0 print:hidden"
         ref={mapRef}
         zoomControl={false}
+        doubleClickZoom={false}
       >
         <ZoomControl position="bottomright" />
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+        {mapSource === 'osm' && (
+          <TileLayer
+            attribution='&copy; OpenStreetMap contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+        )}
+        {mapSource === 'google' && (
+          <TileLayer
+            attribution="&copy; Google Maps"
+            url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+          />
+        )}
+        {mapSource === 'google_sat' && (
+          <TileLayer
+            attribution="&copy; Google Maps Satellite"
+            url="https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"
+          />
+        )}
+        {mapSource === 'yandex' && (
+          <TileLayer
+            attribution="&copy; Yandex Maps"
+            url="https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}&scale=1&lang=uz_UZ"
+          />
+        )}
 
         {/* Radius Circle */}
         {isRadiusMode && radiusCenter && (
@@ -1634,22 +1837,67 @@ export default function MapComponent() {
             <Popup offset={[0, -20]}>
               <div className="font-sans text-center mt-1">
                 <h3 className="font-extrabold text-[13px] text-slate-800 leading-tight mb-1">{loc.name}</h3>
-                <p className="text-[10px] font-medium text-slate-500 capitalize mb-2 bg-slate-100 rounded px-1.5 py-0.5 inline-block">
-                  {loc.type === 'dmtt' ? "Maktabgacha ta'lim" : loc.type}
-                </p>
-                {loc.landmark && (
-                  <div className="text-[9px] text-slate-500 italic mb-2 px-1">
-                    Mo'ljal: <span className="font-semibold text-slate-700">{loc.landmark}</span>
+                <div className="flex flex-wrap gap-1 justify-center mb-2">
+                  <span className="text-[9px] font-bold text-slate-500 capitalize bg-slate-100 rounded px-1.5 py-0.5">
+                    {loc.type === 'dmtt' ? "Bog'cha (DMTT)" : loc.type === 'maktab' ? "Maktab" : "Tashkilot"}
+                  </span>
+                  {loc.mahalla && (
+                    <span className="text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5" title="Mahalla">
+                      {loc.mahalla}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-600 mb-2 px-1 text-left border-t border-b border-dashed border-slate-100 py-1.5 my-2">
+                  <div className="flex justify-between items-center font-bold mb-1">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold font-sans">Mo'ljal:</span>
+                    {editingLandmarkId !== loc.id && (
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation();
+                          startEditingLandmark(loc);
+                        }}
+                        className="text-[9px] text-blue-600 hover:text-blue-800 font-bold cursor-pointer underline decoration-dotted"
+                      >
+                        Tahrirlash
+                      </button>
+                    )}
                   </div>
-                )}
-                {(loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt') && (
+                  {editingLandmarkId === loc.id ? (
+                    <div className="mt-1 flex flex-col space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                      <textarea 
+                        value={tempLandmark}
+                        onChange={(e) => setTempLandmark(e.target.value)}
+                        placeholder="Masalan: do'kon qarshisida..."
+                        className="w-full p-1 text-[10px] bg-slate-50 border border-slate-300 rounded outline-none focus:border-blue-500 font-medium resize-none h-[42px]"
+                        disabled={isModerating}
+                        maxLength={200}
+                      />
+                      <div className="flex justify-end gap-1">
+                        <button 
+                          disabled={isModerating}
+                          onClick={(e) => { e.stopPropagation(); setEditingLandmarkId(null); }}
+                          className="px-1.5 py-0.5 text-[8px] text-slate-500 font-bold border border-slate-200 rounded hover:bg-slate-50 cursor-pointer"
+                        >
+                          Bekor qilish
+                        </button>
+                        <button 
+                          disabled={isModerating}
+                          onClick={(e) => { e.stopPropagation(); saveLandmark(loc); }}
+                          className="px-1.5 py-0.5 text-[8px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded cursor-pointer disabled:opacity-50"
+                        >
+                          {isModerating ? "Tekshirilmoqda..." : "Saqlash"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-slate-700 italic bg-slate-50 rounded px-1.5 py-1 text-[10px] border border-slate-100 leading-normal font-medium">
+                      {loc.landmark || "Kiritilmagan"}
+                    </div>
+                  )}
+                </div>
+                {loc.cadastre && (
                   <div className="flex justify-between items-center text-[9px] text-slate-600 mb-2 px-1">
-                     <span className="font-semibold shrink-0">Sig'imi:</span> <span className="font-bold text-slate-900 border-b border-dashed border-slate-300">{loc.capacity || '???'} o'rin</span>
-                  </div>
-                )}
-                {(loc.type === 'maktab' || loc.type === 'bogcha' || loc.type === 'dmtt') && (
-                  <div className="flex justify-between items-center text-[9px] text-slate-600 mb-2 px-1">
-                     <span className="font-semibold shrink-0">Maydoni:</span> <span className="font-bold text-slate-900 border-b border-dashed border-slate-300">{loc.area || '???'} ga</span>
+                     <span className="font-semibold shrink-0">Kadastr:</span> <span className="font-mono font-bold text-slate-900 border-b border-dashed border-slate-300 select-all" title="Nusxalash uchun bosing">{loc.cadastre}</span>
                   </div>
                 )}
                 <div className="flex flex-col space-y-1.5 pt-1 border-t border-slate-100">
@@ -1868,7 +2116,7 @@ export default function MapComponent() {
                           setRouteGeometry(null);
                           setRouteStats(null);
                         }
-                      }}>{isStart ? 'S' : getShortLabelString(loc.name)}</span>
+                      }}>{getShortLabelString(loc.name)}</span>
                       <X className="w-4 h-4 hidden group-hover:block" onClick={(e) => removeLocation(e, loc.id)} />
                       {isStart && <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full border-2 border-white pointer-events-none"></div>}
                     </div>
@@ -1879,6 +2127,17 @@ export default function MapComponent() {
           </div>
 
           <div className="print:hidden pt-3 border-t border-slate-100 mt-2 space-y-3">
+            {/* Joylashuvimni boshiga qo'shish tugmasi */}
+            <div className="flex justify-center pb-1">
+              <button 
+                onClick={handleAddGPSToStart}
+                className="w-full sm:w-[220px] h-[32px] rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold flex items-center justify-center space-x-1.5 shadow-sm hover:shadow active:scale-95 transition-all cursor-pointer"
+                title="Mening hozirgi GPS joylashuvimni marshrut boshiga birinchi nuqta qilib qo'yish"
+              >
+                <LocateFixed className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Marshrut boshiga joylashuvimni qo'shish</span>
+              </button>
+            </div>
             {selectedLocations.length > 0 && (
               <label className="flex items-center space-x-2 text-sm font-semibold text-slate-700 cursor-pointer p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
                 <input 
@@ -2062,6 +2321,8 @@ export default function MapComponent() {
                   <tr className="bg-slate-100">
                     <th className="border border-slate-800 py-2 px-3 text-center w-12 font-bold uppercase text-[10px]">№</th>
                     <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Muassasa nomi</th>
+                    <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Mahalla</th>
+                    <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Kadastr</th>
                     <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Mo'ljal</th>
                     <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Turi</th>
                     <th className="border border-slate-800 py-2 px-3 text-left font-bold uppercase text-[10px]">Sig'imi</th>
@@ -2072,6 +2333,8 @@ export default function MapComponent() {
                     <tr key={loc.id}>
                       <td className="border border-slate-800 py-1.5 px-3 text-center">{i + 1}</td>
                       <td className="border border-slate-800 py-1.5 px-3 font-medium">{loc.name}</td>
+                      <td className="border border-slate-800 py-1.5 px-3 font-medium text-[10px] text-blue-700">{loc.mahalla || '-'}</td>
+                      <td className="border border-slate-800 py-1.5 px-3 font-mono text-[9px] text-slate-700">{loc.cadastre || '-'}</td>
                       <td className="border border-slate-800 py-1.5 px-3 font-medium text-[10px] italic">{loc.landmark || '-'}</td>
                       <td className="border border-slate-800 py-1.5 px-3 uppercase text-[10px] text-slate-600">{loc.type}</td>
                       <td className="border border-slate-800 py-1.5 px-3 text-[10px] text-slate-600">{loc.capacity ? `${loc.capacity} o'rin` : '-'}</td>
