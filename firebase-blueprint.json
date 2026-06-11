@@ -31,6 +31,20 @@
         "createdAt": { "type": "string" }
       },
       "required": ["actionType", "data", "status", "createdBy", "createdAt"]
+    },
+    "route": {
+      "title": "Saved Route",
+      "description": "Represents a saved custom route on the map",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "locations": { "type": "array" },
+        "routeStats": { "type": "object" },
+        "isRoundtrip": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "locations", "createdBy", "createdAt"]
     }
   },
   "firestore": {
@@ -41,6 +55,10 @@
     "/requests/{requestId}": {
       "schema": "request",
       "description": "Collection of edit/add requests"
+    },
+    "/routes/{routeId}": {
+      "schema": "route",
+      "description": "Collection of saved custom routes"
     }
   }
 }

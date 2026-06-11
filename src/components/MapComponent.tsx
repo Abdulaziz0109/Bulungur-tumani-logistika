@@ -3,9 +3,9 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
-import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -64,6 +64,43 @@ function Toggle({ label, checked, onChange, color = "bg-blue-600" }: { label: st
   );
 }
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 export default function MapComponent() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,7 +136,7 @@ export default function MapComponent() {
 
   // Settings & Filters
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [mapSource, setMapSource] = useState<'osm' | 'google' | 'google_sat' | 'yandex'>('osm');
+  const [mapSource, setMapSource] = useState<'osm' | 'google' | 'google_sat'>('google');
   const [filters, setFilters] = useState({ schools: true, kindergartens: true, others: true });
   const [layers, setLayers] = useState({ district: true, neighborhoods: false, highways: false });
   const [highwaysData, setHighwaysData] = useState<any>(null);
@@ -114,6 +151,14 @@ export default function MapComponent() {
   const [editingLandmarkId, setEditingLandmarkId] = useState<string | null>(null);
   const [tempLandmark, setTempLandmark] = useState<string>('');
   const [isModerating, setIsModerating] = useState<boolean>(false);
+
+  // Saved custom routes states
+  const [savedRoutes, setSavedRoutes] = useState<any[]>([]);
+  const [isSavedRoutesLoading, setIsSavedRoutesLoading] = useState<boolean>(false);
+  const [isSavingRoute, setIsSavingRoute] = useState<boolean>(false);
+  const [newRouteName, setNewRouteName] = useState<string>('');
+  const [showSaveRouteForm, setShowSaveRouteForm] = useState<boolean>(false);
+  const [showSavedRoutesList, setShowSavedRoutesList] = useState<boolean>(false);
   
   const [isBatchSelectModalOpen, setIsBatchSelectModalOpen] = useState(false);
   const [batchSearchQuery, setBatchSearchQuery] = useState('');
@@ -591,6 +636,143 @@ export default function MapComponent() {
       }
     }
   };
+
+  const fetchSavedRoutes = async () => {
+    setIsSavedRoutesLoading(true);
+    try {
+      const currentUid = currentUser?.uid || 'guest';
+      const q = query(collection(db, 'routes'), where('createdBy', '==', currentUid));
+      const querySnapshot = await getDocs(q);
+      const routesList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as any[];
+      
+      setSavedRoutes(routesList);
+    } catch (error) {
+      console.error('Error fetching saved routes:', error);
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'routes');
+      } catch (err) {
+        // logged
+      }
+    } finally {
+      setIsSavedRoutesLoading(false);
+    }
+  };
+
+  const handleSaveRoute = async () => {
+    if (selectedLocations.length < 2) {
+      showToast("Marshrutni saqlash uchun kamida 2 ta manzil tanlangan bo'lishi kerak", "error");
+      return;
+    }
+    if (!newRouteName.trim()) {
+      showToast("Iltimos, marshrut nomini kiriting", "error");
+      return;
+    }
+
+    setIsSavingRoute(true);
+    try {
+      const currentUid = currentUser?.uid || 'guest';
+      const routeData = {
+        name: newRouteName.trim(),
+        locations: selectedLocations,
+        routeStats: routeStats || null,
+        isRoundtrip: isRoundtrip,
+        createdBy: currentUid,
+        createdAt: new Date().toISOString()
+      };
+
+      await addDoc(collection(db, 'routes'), routeData);
+      
+      showToast("Marshrut muvaffaqiyatli saqlandi!", "success");
+      setNewRouteName("");
+      setShowSaveRouteForm(false);
+      fetchSavedRoutes();
+    } catch (error) {
+      console.error("Error saving route:", error);
+      showToast("Marshrutni saqlashda xatolik yuz berdi", "error");
+      try {
+        handleFirestoreError(error, OperationType.CREATE, 'routes');
+      } catch (err) {
+        // logged
+      }
+    } finally {
+      setIsSavingRoute(false);
+    }
+  };
+
+  const handleDeleteRoute = async (routeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Ushbu marshrutni o'chirmoqchimisiz?")) return;
+
+    try {
+      await deleteDoc(doc(db, 'routes', routeId));
+      showToast("Marshrut muvaffaqiyatli o'chirildi", "success");
+      fetchSavedRoutes();
+    } catch (error) {
+      console.error("Error deleting route:", error);
+      showToast("Marshrutni o'chirishda xatolik yuz berdi", "error");
+      try {
+        handleFirestoreError(error, OperationType.DELETE, `routes/${routeId}`);
+      } catch (err) {
+        // logged
+      }
+    }
+  };
+
+  const handleLoadRoute = async (route: any) => {
+    setSelectedLocations(route.locations);
+    setIsRoundtrip(route.isRoundtrip || false);
+    
+    if (route.locations && route.locations.length >= 2) {
+      setIsCalculating(true);
+      setRouteGeometry(null);
+      setMultiRouteGeometries(null);
+      try {
+        const tripParams = `?roundtrip=${route.isRoundtrip || false}&source=first&overview=full&geometries=geojson`;
+        const coordsStr = route.locations.map((loc: any) => `${loc.lng},${loc.lat}`).join(';');
+        const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}${tripParams}`);
+        const data = await res.json();
+        
+        if (data.code === 'Ok' && data.trips && data.trips.length > 0) {
+          const trip = data.trips[0];
+          const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+          setRouteGeometry(routeCoords);
+          
+          setRouteStats({
+            distance: trip.distance,
+            duration: trip.duration,
+            routes: [{
+              distance: trip.distance,
+              duration: trip.duration,
+              locations: route.locations,
+              color: '#3b82f6'
+            }]
+          });
+          setOptimizedRouteDistance(trip.distance);
+          showToast(`"${route.name}" yuklandi va xaritaga chizildi!`, "success");
+        } else {
+          setRouteStats(route.routeStats || null);
+          showToast(`"${route.name}" yuklandi, lek chizib bo'lmadi`, "info");
+        }
+      } catch (err) {
+        console.error("OSRM draw error: ", err);
+        setRouteStats(route.routeStats || null);
+        showToast(`"${route.name}" yuklashda muammo bo'ldi`, "error");
+      } finally {
+        setIsCalculating(false);
+      }
+    } else {
+      setRouteGeometry(null);
+      setRouteStats(null);
+      showToast(`"${route.name}" yuklandi!`, "success");
+    }
+  };
+
+  useEffect(() => {
+    fetchSavedRoutes();
+  }, [currentUser]);
 
   const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1400,7 +1582,7 @@ export default function MapComponent() {
                          Google Sun'iy yo'ldosh
                       </button>
                       <button 
-                         onClick={() => setMapSource('yandex')}
+                         onClick={() => {}} style={{ display: 'none' }}
                          className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${mapSource === 'yandex' ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                       >
                          Yandex Maps
@@ -1785,7 +1967,7 @@ export default function MapComponent() {
             url="https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"
           />
         )}
-        {mapSource === 'yandex' && (
+        {false && (
           <TileLayer
             attribution="&copy; Yandex Maps"
             url="https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}&scale=1&lang=uz_UZ"
@@ -2084,6 +2266,66 @@ export default function MapComponent() {
             </div>
           </div>
           
+          {/* Saved Routes Accordion/Collapsible */}
+          <div className="mb-4 shrink-0">
+            <button 
+              onClick={() => setShowSavedRoutesList(!showSavedRoutesList)}
+              className="w-full flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition-all font-bold text-xs group cursor-pointer"
+            >
+              <div className="flex items-center space-x-2">
+                <History className="w-4 h-4 text-slate-500 group-hover:text-indigo-600 transition-colors" />
+                <span className="text-slate-700">Mening saqlangan marshrutlarim</span>
+                {savedRoutes.length > 0 && (
+                  <span className="px-1.5 py-0.5 bg-indigo-100 font-extrabold text-indigo-700 rounded text-[9px]">
+                    {savedRoutes.length}
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                {showSavedRoutesList ? "Yopish" : "Ko'rish"}
+              </span>
+            </button>
+            {showSavedRoutesList && (
+              <div className="mt-2 p-2 bg-slate-50/50 border border-slate-200 rounded-xl max-h-[220px] overflow-y-auto space-y-1.5 scrollbar-thin">
+                {isSavedRoutesLoading ? (
+                  <div className="flex items-center justify-center py-6 text-xs text-slate-400 space-x-1.5">
+                    <div className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Yuklanmoqda...</span>
+                  </div>
+                ) : savedRoutes.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-slate-400 font-medium">
+                    Hozircha saqlangan marshrutlar yo'q
+                  </div>
+                ) : (
+                  savedRoutes.map((route) => (
+                    <div 
+                      key={route.id}
+                      onClick={() => handleLoadRoute(route)}
+                      className="group cursor-pointer p-2 bg-white hover:bg-indigo-50/40 border border-slate-100 hover:border-indigo-100 rounded-lg flex items-center justify-between transition-all"
+                    >
+                      <div className="flex flex-col space-y-0.5 overflow-hidden pr-2">
+                        <span className="font-bold text-xs text-slate-800 truncate" title={route.name}>{route.name}</span>
+                        <div className="flex items-center space-x-1.5 text-[9px] text-slate-500 font-semibold font-mono">
+                          <span>📍 {route.locations?.length || 0} manzil</span>
+                          {route.routeStats?.distance && (
+                            <span>• {(route.routeStats.distance / 1000).toFixed(1)} km</span>
+                          )}
+                        </div>
+                      </div>
+                      <button 
+                        onClick={(e) => handleDeleteRoute(route.id, e)}
+                        className="p-1 rounded-md bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shrink-0 cursor-pointer"
+                        title="O'chirish"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 min-h-[150px]">
             {selectedLocations.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-400">
@@ -2158,12 +2400,14 @@ export default function MapComponent() {
 
             <div className="flex space-x-2">
               <button 
-                className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all ${
+                className={`${
+                  selectedLocations.length < 2 ? 'flex-1' : 'flex-[2]'
+                } py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all cursor-pointer ${
                   selectedLocations.length < 2 
                     ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                     : 'bg-slate-900 hover:bg-slate-800 text-white shadow-lg active:scale-95'
                 }`}
-                onClick={calculateOptimizedRoute}
+                onClick={() => calculateOptimizedRoute()}
                 disabled={selectedLocations.length < 2 || isCalculating}
                 title="Marshrutni hisoblash"
               >
@@ -2175,11 +2419,46 @@ export default function MapComponent() {
                 ) : (
                     <span className="flex items-center space-x-2">
                       <Navigation className="w-4 h-4" />
-                      <span>Marshrutni hisoblash</span>
+                      <span>Hisoblash</span>
                     </span>
                 )}
               </button>
+
+              {selectedLocations.length >= 2 && (
+                <button
+                  onClick={() => setShowSaveRouteForm(!showSaveRouteForm)}
+                  className="flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm active:scale-95 transition-all cursor-pointer"
+                  title="Marshrutni saqlash"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>Saqlash</span>
+                </button>
+              )}
             </div>
+
+            {showSaveRouteForm && selectedLocations.length >= 2 && (
+              <div className="mt-2 p-3 bg-indigo-50/50 border border-indigo-100 rounded-2xl flex flex-col space-y-2 animate-in slide-in-from-top-2 duration-200">
+                <span className="text-[11px] font-bold text-indigo-800">Yangi Marshrut Nomi:</span>
+                <div className="flex space-x-2">
+                  <input 
+                    type="text" 
+                    value={newRouteName}
+                    onChange={(e) => setNewRouteName(e.target.value)}
+                    placeholder="Masalan: Bulung'ur reysi..."
+                    className="flex-1 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-xs outline-none focus:border-indigo-500 font-medium text-slate-800"
+                    maxLength={150}
+                    disabled={isSavingRoute}
+                  />
+                  <button 
+                    onClick={handleSaveRoute}
+                    disabled={isSavingRoute}
+                    className="px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center shadow transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingRoute ? "..." : "Saqlash"}
+                  </button>
+                </div>
+              </div>
+            )}
             
             {selectedLocations.length > 5 && (
                <div className="flex flex-col space-y-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">

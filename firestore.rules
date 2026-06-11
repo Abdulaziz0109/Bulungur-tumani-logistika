@@ -31,6 +31,13 @@ service cloud.firestore {
               data.createdBy is string && data.createdBy.size() <= 128 &&
               data.createdAt is string && data.createdAt.size() <= 50;
     }
+    function isValidRoute(data) {
+       return data.keys().hasAll(['name', 'locations', 'createdBy', 'createdAt']) &&
+              data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+              data.locations is list && data.locations.size() > 0 && data.locations.size() <= 100 &&
+              data.createdBy is string && data.createdBy.size() <= 128 &&
+              data.createdAt is string && data.createdAt.size() <= 50;
+    }
 
     match /locations/{locationId} {
       allow read: if isValidId(locationId);
@@ -49,6 +56,18 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(requestId) && isValidRequest(incoming()) && incoming().createdBy == request.auth.uid && incoming().status == 'pending';
       allow update: if isAdmin() && isValidId(requestId) && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
       allow delete: if isAdmin();
+    }
+    
+    match /routes/{routeId} {
+      allow read, delete: if isValidId(routeId) && (isAdmin() || (isSignedIn() && existing().createdBy == request.auth.uid) || existing().createdBy == 'guest');
+      allow list: if (request.auth != null && resource.data.createdBy == request.auth.uid) || (request.auth == null && resource.data.createdBy == 'guest');
+      allow create: if isValidId(routeId) && isValidRoute(incoming()) && (
+        (isSignedIn() && incoming().createdBy == request.auth.uid) ||
+        (incoming().createdBy == 'guest')
+      );
+      allow update: if isValidId(routeId) && isValidRoute(incoming()) && (
+        isAdmin() || (isSignedIn() && existing().createdBy == request.auth.uid) || existing().createdBy == 'guest'
+      );
     }
     
     match /users/{userId} {
