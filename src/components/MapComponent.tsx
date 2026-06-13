@@ -128,9 +128,30 @@ export default function MapComponent() {
       return null;
     }
   });
-  const [vehiclesCount, setVehiclesCount] = useState<number>(1);
-  const [isRoundtrip, setIsRoundtrip] = useState<boolean>(false);
-  const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(false);
+  const [vehiclesCount, setVehiclesCount] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_vehicles_count');
+      return cached ? parseInt(cached, 10) : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [isRoundtrip, setIsRoundtrip] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_is_roundtrip');
+      return cached === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_shared_start_point');
+      return cached === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [routeStats, setRouteStats] = useState<any>(() => {
     try {
       const cached = localStorage.getItem('mmtb_last_route_stats');
@@ -193,7 +214,26 @@ export default function MapComponent() {
 
   // Settings & Filters
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [mapSource, setMapSource] = useState<'osm' | 'google' | 'google_sat'>('google');
+  const [mapSource, setMapSource] = useState<'osm' | 'google' | 'google_sat' | 'yandex'>(() => {
+    try {
+      const isNavActive = localStorage.getItem('mmtb_is_navigation_active') === 'true';
+      if (isNavActive) {
+        return 'yandex';
+      }
+      const cached = localStorage.getItem('mmtb_map_source');
+      return (cached as any) || 'google';
+    } catch {
+      return 'google';
+    }
+  });
+  const [routeSteps, setRouteSteps] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_last_route_steps');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [filters, setFilters] = useState({ schools: true, kindergartens: true, others: true });
   const [layers, setLayers] = useState({ district: true, neighborhoods: false, highways: false });
   const [highwaysData, setHighwaysData] = useState<any>(null);
@@ -241,12 +281,48 @@ export default function MapComponent() {
 
   const [optimizedRouteDistance, setOptimizedRouteDistance] = useState<number | null>(null);
   const [hideUnselected, setHideUnselected] = useState(false);
+  const [isBottomHudExpanded, setIsBottomHudExpanded] = useState<boolean>(false);
 
-  const [isNavigationActive, setIsNavigationActive] = useState<boolean>(false);
-  const [navigationStepIndex, setNavigationStepIndex] = useState<number>(1);
-  const [isAutoCenter, setIsAutoCenter] = useState<boolean>(true);
-  const [hideOtherMarkersDuringTrip, setHideOtherMarkersDuringTrip] = useState<boolean>(true);
-  const [speedLimit, setSpeedLimit] = useState<number>(60);
+  const [isNavigationActive, setIsNavigationActive] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_is_navigation_active');
+      return cached === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [navigationStepIndex, setNavigationStepIndex] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_navigation_step_index');
+      return cached ? parseInt(cached, 10) : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const [isAutoCenter, setIsAutoCenter] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_is_auto_center');
+      return cached !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [hideOtherMarkersDuringTrip, setHideOtherMarkersDuringTrip] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_hide_other_markers');
+      return cached !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [speedLimit, setSpeedLimit] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_speed_limit');
+      return cached ? parseInt(cached, 10) : 60;
+    } catch {
+      return 60;
+    }
+  });
 
   // Active Geolocation watcher for HUD Navigation mode
   useEffect(() => {
@@ -340,6 +416,113 @@ export default function MapComponent() {
     }
   }, [routeStats]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_last_route_steps', JSON.stringify(routeSteps));
+    } catch (e) {
+      console.error("Local storage error:", e);
+    }
+  }, [routeSteps]);
+
+  // Sync other active navigation/route settings to localStorage for reloading persistence
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_is_navigation_active', isNavigationActive ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
+    }
+  }, [isNavigationActive]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_navigation_step_index', String(navigationStepIndex));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [navigationStepIndex]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_is_auto_center', isAutoCenter ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
+    }
+  }, [isAutoCenter]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_hide_other_markers', hideOtherMarkersDuringTrip ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
+    }
+  }, [hideOtherMarkersDuringTrip]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_speed_limit', String(speedLimit));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [speedLimit]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_map_source', mapSource);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [mapSource]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_vehicles_count', String(vehiclesCount));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [vehiclesCount]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_is_roundtrip', isRoundtrip ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
+    }
+  }, [isRoundtrip]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_shared_start_point', sharedStartPoint ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
+    }
+  }, [sharedStartPoint]);
+
+  // Auto-hide expanded bottom panel after 5 seconds of inactivity
+  useEffect(() => {
+    if (isBottomHudExpanded) {
+      const timer = setTimeout(() => {
+        setIsBottomHudExpanded(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [isBottomHudExpanded]);
+
+  // Dynamic map provider switching based on navigation status (Transition only)
+  const prevNavigationActive = useRef<boolean>(isNavigationActive);
+
+  useEffect(() => {
+    if (isNavigationActive !== prevNavigationActive.current) {
+      if (isNavigationActive) {
+        setMapSource('yandex');
+        showToast("Navigatsiya rejimi boshlandi. Yandex xaritasi faollashtirildi.", "info");
+      } else {
+        setMapSource('google');
+        showToast("Navigatsiya rejimi tugatildi. Google xaritasi faollashtirildi.", "info");
+      }
+      prevNavigationActive.current = isNavigationActive;
+    }
+  }, [isNavigationActive]);
+
   const { role, currentUser } = useAuth();
   const navigate = useNavigate();
 
@@ -379,6 +562,47 @@ export default function MapComponent() {
       Math.sin(dLon/2) * Math.sin(dLon/2); 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
     return R * c; // Distance in km
+  };
+
+  const getUpcomingManeuver = (userLoc: [number, number] | null, steps: any[]) => {
+    if (!userLoc || !steps || steps.length === 0) return null;
+    
+    let closestIndex = 0;
+    let minDistance = Infinity;
+    
+    steps.forEach((step, idx) => {
+      if (!step.maneuver || !step.maneuver.location) return;
+      const stepLat = step.maneuver.location[1];
+      const stepLng = step.maneuver.location[0];
+      const dist = getDistanceFromLatLonInKm(userLoc[0], userLoc[1], stepLat, stepLng) * 1000; // in meters
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestIndex = idx;
+      }
+    });
+    
+    let upcomingIdx = closestIndex;
+    const currentStep = steps[closestIndex];
+    if (currentStep && currentStep.maneuver && currentStep.maneuver.location) {
+      const closestStepLat = currentStep.maneuver.location[1];
+      const closestStepLng = currentStep.maneuver.location[0];
+      const distToClosest = getDistanceFromLatLonInKm(userLoc[0], userLoc[1], closestStepLat, closestStepLng) * 1000;
+      if (distToClosest < 40 && closestIndex < steps.length - 1) {
+        upcomingIdx = closestIndex + 1;
+      }
+    }
+    
+    const upcomingStep = steps[upcomingIdx];
+    if (!upcomingStep || !upcomingStep.maneuver || !upcomingStep.maneuver.location) return null;
+    const upcomingLat = upcomingStep.maneuver.location[1];
+    const upcomingLng = upcomingStep.maneuver.location[0];
+    const distanceToManeuver = getDistanceFromLatLonInKm(userLoc[0], userLoc[1], upcomingLat, upcomingLng) * 1000; // meters
+    
+    return {
+      step: upcomingStep,
+      index: upcomingIdx,
+      distance: distanceToManeuver
+    };
   };
 
   const speakCurrentRouteStep = (stepIdx: number) => {
@@ -949,7 +1173,7 @@ export default function MapComponent() {
       setRouteGeometry(null);
       setMultiRouteGeometries(null);
       try {
-        const tripParams = `?roundtrip=${route.isRoundtrip || false}&source=first&overview=full&geometries=geojson`;
+        const tripParams = `?roundtrip=${route.isRoundtrip || false}&source=first&overview=full&geometries=geojson&steps=true`;
         const coordsStr = route.locations.map((loc: any) => `${loc.lng},${loc.lat}`).join(';');
         const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}${tripParams}`);
         const data = await res.json();
@@ -958,6 +1182,23 @@ export default function MapComponent() {
           const trip = data.trips[0];
           const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
           setRouteGeometry(routeCoords);
+          
+          // Extract steps
+          const allSteps: any[] = [];
+          if (trip.legs) {
+            trip.legs.forEach((leg: any, legIdx: number) => {
+              if (leg.steps) {
+                leg.steps.forEach((step: any) => {
+                  allSteps.push({
+                    ...step,
+                    legIndex: legIdx,
+                    targetLabel: route.locations[legIdx + 1]?.name || ""
+                  });
+                });
+              }
+            });
+          }
+          setRouteSteps(allSteps);
           
           setRouteStats({
             distance: trip.distance,
@@ -1190,7 +1431,7 @@ export default function MapComponent() {
     setMultiRouteGeometries(null);
     try {
       const coords = selectedLocations.map(l => `${l.lng},${l.lat}`).join(';');
-      const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+      const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`;
       const res = await fetch(url);
       const data = await res.json();
       
@@ -1198,6 +1439,24 @@ export default function MapComponent() {
         const route = data.routes[0];
         const routeCoords = route.geometry.coordinates.map((c: [number, number]) => [c[1], c[0]] as [number, number]);
         setRouteGeometry(routeCoords);
+        
+        // Extract steps
+        const allSteps: any[] = [];
+        if (route.legs) {
+          route.legs.forEach((leg: any, legIdx: number) => {
+            if (leg.steps) {
+              leg.steps.forEach((step: any) => {
+                allSteps.push({
+                  ...step,
+                  legIndex: legIdx,
+                  targetLabel: selectedLocations[legIdx + 1]?.name || ""
+                });
+              });
+            }
+          });
+        }
+        setRouteSteps(allSteps);
+        
         setRouteStats({
           distance: route.distance, 
           duration: route.duration  
@@ -1337,7 +1596,7 @@ export default function MapComponent() {
     setRouteGeometry(null);
     setMultiRouteGeometries(null);
     try {
-      const tripParams = `?roundtrip=${isRoundtrip}&source=first&overview=full&geometries=geojson`;
+      const tripParams = `?roundtrip=${isRoundtrip}&source=first&overview=full&geometries=geojson&steps=true`;
 
       if (vehiclesCount <= 1) {
         const coordsStr = selectedLocations.map(loc => `${loc.lng},${loc.lat}`).join(';');
@@ -1348,6 +1607,23 @@ export default function MapComponent() {
           const trip = data.trips[0];
           const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
           setRouteGeometry(routeCoords);
+          
+          // Extract steps
+          const allSteps: any[] = [];
+          if (trip.legs) {
+            trip.legs.forEach((leg: any, legIdx: number) => {
+              if (leg.steps) {
+                leg.steps.forEach((step: any) => {
+                  allSteps.push({
+                    ...step,
+                    legIndex: legIdx,
+                    targetLabel: selectedLocations[legIdx + 1]?.name || ""
+                  });
+                });
+              }
+            });
+          }
+          setRouteSteps(allSteps);
           
           let orderedLocations = selectedLocations;
           if (data.waypoints) {
@@ -1573,7 +1849,7 @@ export default function MapComponent() {
         if (userLocation) {
           calculatedDistanceKm = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
           if (calculatedDistanceKm < 1) {
-            distanceText = `${(calculatedDistanceKm * 1000).toFixed(0)} metr`;
+            distanceText = `${(calculatedDistanceKm * 1000).toFixed(0)} m`;
           } else {
             distanceText = `${calculatedDistanceKm.toFixed(1)} km`;
           }
@@ -1582,160 +1858,384 @@ export default function MapComponent() {
         // Estimated Time of Arrival (approx)
         const etaMinutes = calculatedDistanceKm ? Math.max(1, Math.round(calculatedDistanceKm * 2)) : 0;
 
-        return (
-          <div className="absolute inset-0 pointer-events-none z-[999] flex flex-col justify-between p-4 font-sans select-none print:hidden">
-            
-            {/* Top HUD Card: Wayfinder / Turn directive */}
-            <div className="pointer-events-auto w-full max-w-lg mx-auto bg-slate-950/95 backdrop-blur-md rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.8)] border border-slate-800 text-white p-4 md:p-5 flex flex-col space-y-3 shrink-0 animate-in slide-in-from-top-4 duration-300">
+        // Get upcoming maneuver from OSRM steps
+        const upcomingManeuver = getUpcomingManeuver(userLocation, routeSteps);
+        
+        let turnDistanceText = "";
+        let turnInstruction = "To'g'riga harakatlaning";
+        let turnModifier = "straight";
+        let turnType = "depart";
+        let nextTurnTypeAfterThis = "";
+        
+        if (upcomingManeuver) {
+          const m = upcomingManeuver.step.maneuver;
+          turnModifier = m.modifier || "straight";
+          turnType = m.type || "turn";
+          
+          if (upcomingManeuver.distance < 1000) {
+            turnDistanceText = `${Math.round(upcomingManeuver.distance)} m`;
+          } else {
+            turnDistanceText = `${(upcomingManeuver.distance / 1000).toFixed(1)} km`;
+          }
+          
+          if (turnType === 'arrive') {
+            turnInstruction = "Manzilga yetib keldingiz!";
+          } else {
+            const modLabel = 
+              turnModifier === 'left' ? "Chapga buriling" :
+              turnModifier === 'right' ? "O'ngga buriling" :
+              turnModifier === 'slight left' ? "Chapga salgina buriling" :
+              turnModifier === 'slight right' ? "O'ngga salgina buriling" :
+              turnModifier === 'sharp left' ? "Chapga keskin buriling" :
+              turnModifier === 'sharp right' ? "O'ngga keskin buriling" :
+              turnModifier === 'uturn' || turnModifier === 'u-turn' ? "Orqaga qayrilish" :
+              "To'g'riga harakatlaning";
               
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <span className="flex h-2.5 w-2.5 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                    {navigationStepIndex === selectedLocations.length && isRoundtrip ? "Yakuniy qaytish" : `Navigatsiya — ${navigationStepIndex}-Manzil`}
-                  </span>
+            const streetName = upcomingManeuver.step.name ? ` (${upcomingManeuver.step.name} ko'chasiga)` : "";
+            turnInstruction = `${modLabel}${streetName}`;
+          }
+          
+          const nextStep = routeSteps[upcomingManeuver.index + 1];
+          if (nextStep && nextStep.maneuver) {
+            const nextMod = nextStep.maneuver.modifier;
+            nextTurnTypeAfterThis = nextMod === 'left' ? "Chapga kirish" : nextMod === 'right' ? "O'ngga kirish" : "To'g'ri yo'l";
+          }
+        } else {
+          turnDistanceText = distanceText;
+          turnInstruction = `Keyingi ob'ekt: ${nextPoint.name}`;
+          turnModifier = "straight";
+        }
+
+        const getEtaTime = (minutes: number) => {
+          const now = new Date();
+          now.setMinutes(now.getMinutes() + minutes);
+          return now.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
+        };
+
+        const getManeuverIcon = (modifier: string, type: string) => {
+          const iconProps = "w-10 h-10 text-white fill-none stroke-current stroke-[3.5] stroke-linecap-round stroke-linejoin-round";
+          
+          if (type === 'arrive') {
+            return (
+              <svg className="w-10 h-10 text-white fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                <line x1="4" y1="22" x2="4" y2="15" />
+              </svg>
+            );
+          }
+          
+          switch (modifier) {
+            case 'left':
+            case 'sharp left':
+              return (
+                <svg className={iconProps} viewBox="0 0 24 24">
+                  <path d="M19 19v-6a4 4 0 0 0-4-4H5" />
+                  <polyline points="9 5 5 9 9 13" />
+                </svg>
+              );
+            case 'right':
+            case 'sharp right':
+              return (
+                <svg className={iconProps} viewBox="0 0 24 24">
+                  <path d="M5 19v-6a4 4 0 0 1 4-4h10" />
+                  <polyline points="15 5 19 9 15 13" />
+                </svg>
+              );
+            case 'slight left':
+              return (
+                <svg className={iconProps} viewBox="0 0 24 24">
+                  <path d="M18 19V11a4 4 0 0 0-2-3.46L11 5" />
+                  <polyline points="15 3 10 4 11 9" />
+                </svg>
+              );
+            case 'slight right':
+              return (
+                <svg className={iconProps} viewBox="0 0 24 24">
+                  <path d="M6 19V11a4 4 0 0 1 2-3.46L13 5" />
+                  <polyline points="9 3 14 4 13 9" />
+                </svg>
+              );
+            case 'uturn':
+            case 'u-turn':
+              return (
+                <svg className={iconProps} viewBox="0 0 24 24">
+                  <path d="M8 19V9a5 5 0 0 1 10 0v10" />
+                  <polyline points="14 15 18 19 22 15" />
+                </svg>
+              );
+            case 'straight':
+            default:
+              return (
+                <svg className={iconProps} viewBox="0 0 24 24">
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </svg>
+              );
+          }
+        };
+
+        let progressPercent = 0;
+        if (routeStats && routeStats.distance && calculatedDistanceKm) {
+          const ratioNextPoint = 1 / (selectedLocations.length + (isRoundtrip ? 1 : 0) - 1);
+          const completedPartSum = (navigationStepIndex - 1) * ratioNextPoint;
+          const remainingDistanceMeters = calculatedDistanceKm * 1000;
+          const segmentDistanceEstimate = routeStats.distance / (selectedLocations.length + (isRoundtrip ? 1 : 0) - 1);
+          const segmentPart = Math.max(0, Math.min(1, 1 - (remainingDistanceMeters / segmentDistanceEstimate))) * ratioNextPoint;
+          progressPercent = Math.min(100, Math.max(0, (completedPartSum + segmentPart) * 100));
+        }
+
+        return (
+          <div className="absolute inset-0 pointer-events-none z-[999] flex flex-col justify-between p-3 md:p-4 font-sans select-none print:hidden">
+            
+            {/* Top-Left Floating Panel: Yandex-Style Turn/Maneuver Directions */}
+            <div className="absolute top-4 left-4 z-[999] pointer-events-auto w-[240px] md:w-[270px] bg-[#1a65ec] text-white p-3.5 rounded-[24px] shadow-[0_16px_36px_rgba(26,101,236,0.35)] border border-[#4c8df6]/20 flex items-center space-x-3.5 animate-in slide-in-from-top-4 duration-300">
+              {/* Maneuver arrow icon */}
+              <div className="w-12 h-12 rounded-[16px] bg-[#0a56dd]/50 shrink-0 flex items-center justify-center">
+                {getManeuverIcon(turnModifier, turnType)}
+              </div>
+              
+              <div className="min-w-0 flex-1 leading-tight">
+                {/* Huge Distance Label */}
+                <div className="text-2xl md:text-3xl font-extrabold tracking-tighter text-white">
+                  {turnDistanceText || distanceText}
                 </div>
-                <div className="text-[10px] font-bold bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-full border border-indigo-500/30">
-                  {navigationStepIndex} / {selectedLocations.length + (isRoundtrip ? 1 : 0) - 1} ob'ekt
-                </div>
+                {/* Street/Action instruction */}
+                <p className="text-[11px] md:text-xs font-semibold text-white/90 truncate mt-0.5" title={turnInstruction}>
+                  {turnInstruction}
+                </p>
+                {/* Next visual helper */}
+                {nextTurnTypeAfterThis && (
+                  <p className="text-[9px] text-blue-100/80 font-bold flex items-center gap-1 mt-0.5 uppercase tracking-wider">
+                    <span>Keyingi:</span>
+                    <span className="truncate">{nextTurnTypeAfterThis}</span>
+                  </p>
+                )}
               </div>
 
-              <div className="flex items-start justify-between space-x-4">
-                <div className="flex items-start space-x-3">
-                  <div className={`p-2.5 rounded-xl shrink-0 ${nextPoint.type === 'dmchen' || nextPoint.type === 'dmtt' ? 'bg-red-500/20 text-red-400' : nextPoint.type === 'maktab' ? 'bg-blue-500/20 text-blue-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                    <Compass className="w-6 h-6 animate-spin" style={{ animationDuration: '10s' }} />
-                  </div>
-                  <div>
-                    <h3 className="font-extrabold text-sm md:text-lg tracking-tight text-white line-clamp-2 leading-tight">
-                      {nextPoint.name}
-                    </h3>
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 bg-slate-900 border border-slate-850 px-1.5 py-0.5 rounded">
-                        {nextPoint.type === 'dmtt' ? "Bog'cha (DMTT)" : nextPoint.type === 'maktab' ? "Maktab" : "Tashkilot"}
-                      </span>
-                      {nextPoint.mahalla && (
-                        <span className="text-[9px] font-bold text-indigo-300 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-900">
-                          {nextPoint.mahalla} mahalla
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+              {/* TTS Sound Helper button */}
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  speakCurrentRouteStep(navigationStepIndex);
+                }}
+                className="w-8.5 h-8.5 bg-white/10 hover:bg-white/20 text-white rounded-[14px] border border-white/10 transition-all flex items-center justify-center active:scale-90 cursor-pointer shrink-0"
+                title="Ovozli yordamchini eshitish"
+                type="button"
+              >
+                <Volume2 className="w-4.5 h-4.5" />
+              </button>
+            </div>
 
-                <button 
-                  onClick={() => speakCurrentRouteStep(navigationStepIndex)}
-                  className="p-3 bg-slate-900 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded-xl transition-all border border-slate-800 shrink-0 cursor-pointer text-center flex items-center justify-center"
-                  title="Yordamchi ovozli xabarni tinglash"
+            {/* Bottom HUD: Yandex Navigator style sleek progress line and indicators */}
+            <div className="mt-auto pointer-events-auto w-full max-w-sm mx-auto flex flex-col space-y-2">
+              {!isBottomHudExpanded ? (
+                /* Compact Mode - Look exactly like the Yandex Navigator bottom bar */
+                <div 
+                  onClick={() => setIsBottomHudExpanded(true)}
+                  className="w-full bg-[#1c1d22]/95 backdrop-blur-md rounded-2xl border border-slate-800/80 p-3 shadow-[0_16px_40px_rgba(0,0,0,0.6)] cursor-pointer hover:bg-slate-900 transition-all duration-200 flex flex-col space-y-2 animate-in slide-in-from-bottom-2"
                 >
-                  <Volume2 className="w-5 h-5" />
-                </button>
-              </div>
+                  {/* Top row with metrics: Distance, Arrival, Duration, Exit */}
+                  <div className="flex items-center justify-between font-sans">
+                    {/* Left Icon */}
+                    <div className="bg-slate-800/60 p-1 rounded-lg shrink-0 mr-1 text-slate-400">
+                      <svg className="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                        <path d="m9 12 2 2 4-4" />
+                      </svg>
+                    </div>
 
-              {nextPoint.landmark && (
-                <div className="bg-slate-900 border border-slate-800/80 rounded-xl px-3 py-2 text-xs text-slate-300 font-medium">
-                  🌟 <span className="font-bold text-white">Mo'ljal:</span> {nextPoint.landmark}
-                </div>
-              )}
+                    {/* Metrics container */}
+                    <div className="flex items-baseline space-x-3.5 flex-1 min-w-0">
+                      {/* Distance */}
+                      <span className="text-sm md:text-base font-extrabold text-white tracking-tight shrink-0">
+                        {distanceText}
+                      </span>
+                      
+                      {/* Arrival clock time */}
+                      <span className="text-xs md:text-sm font-semibold text-slate-400 tracking-tight shrink-0">
+                        {userLocation ? getEtaTime(etaMinutes) : "--:--"}
+                      </span>
 
-              {userLocation ? (
-                <div className="mt-2 grid grid-cols-2 gap-2 text-center pt-3 border-t border-slate-800/60">
-                  <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-900/20">
-                    <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Targetgacha masofa</span>
-                    <span className="font-black text-xl text-emerald-400">{distanceText}</span>
+                      {/* Remaining duration (e.g. 15 daq) in vivid green */}
+                      <span className="text-sm md:text-base font-extrabold text-[#00c569] tracking-tight truncate">
+                        {userLocation ? `${etaMinutes} daq` : "Obyektgacha..."}
+                      </span>
+                    </div>
+
+                    {/* Quick Exit X Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsNavigationActive(false);
+                        showToast("Navigatsiya yakunlandi.", "info");
+                      }}
+                      className="p-1 text-slate-500 hover:text-red-400 bg-slate-800/30 hover:bg-red-950/40 rounded-lg transition-all shrink-0 cursor-pointer"
+                      title="Navigatsiyani bekor qilish"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
                   </div>
-                  <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-900/20">
-                    <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Taxminiy vaqt</span>
-                    <span className="font-black text-xl text-orange-400">{etaMinutes > 0 ? `~${etaMinutes} daq` : "Hisoblanmoqda..."}</span>
+
+                  {/* Horizontal Traffic Progress Tracker Line */}
+                  <div className="relative w-full h-1 rounded-full overflow-hidden bg-slate-800">
+                    <div className="absolute inset-0 bg-gradient-to-r from-[#00c569] via-[#ffb300] via-[#f97316] to-[#ef4444]"></div>
+                    <div 
+                      className="absolute top-0 right-0 h-full bg-[#1c1d22]/90 transition-all duration-700" 
+                      style={{ width: `${100 - (userLocation ? progressPercent : 0)}%` }}
+                    ></div>
+                    <div 
+                      className="absolute top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white shadow-xl border-2 border-blue-500"
+                      style={{ left: `calc(${userLocation ? progressPercent : 0}% - 4px)` }}
+                    ></div>
+                  </div>
+
+                  {/* Very compact label showing next main waypoint */}
+                  <div className="flex items-center justify-between text-[8px] font-black tracking-wider text-slate-500 uppercase leading-none">
+                    <span className="truncate max-w-[200px] text-slate-400">📍 {nextPoint.name}</span>
+                    <span className="text-[#3b82f6] animate-pulse">BATAFSIL KO'RISH</span>
                   </div>
                 </div>
               ) : (
-                <div className="bg-indigo-950/40 border border-indigo-900/30 px-3 py-2.5 rounded-xl text-center text-xs text-indigo-300 font-medium animate-pulse">
-                  📍 GPS drayveri faollashtirilmoqda, iltimos smartfoningizda geolokatsiyaga ruxsat bering...
+                /* Expanded Mode - Complete elegant helper card with route controls */
+                <div 
+                  className="w-full bg-slate-950/95 backdrop-blur-md rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-slate-800 text-white p-3 flex flex-col space-y-2.5 animate-in slide-in-from-bottom-4 duration-300"
+                >
+                  {/* Destination Object Quick Metadata & Chevrons controller */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1 flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsBottomHudExpanded(true); // Reset timer active
+                          const nextVal = Math.max(1, navigationStepIndex - 1);
+                          setNavigationStepIndex(nextVal);
+                        }}
+                        disabled={navigationStepIndex <= 1}
+                        className="p-1 hover:bg-slate-900 disabled:opacity-20 rounded-lg text-slate-400 disabled:cursor-not-allowed hover:text-white transition-all scale-95 shrink-0 cursor-pointer"
+                        title="Oldingi ob'ekt"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-extrabold text-xs text-slate-100 tracking-tight leading-tight truncate">
+                          {nextPoint.name}
+                        </h4>
+                        <div className="flex items-center space-x-1.5 mt-0.5">
+                          <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 bg-slate-900 border border-slate-800 px-1 py-0.2 rounded">
+                            {nextPoint.type === 'dmtt' ? "DMTT" : nextPoint.type === 'maktab' ? "Maktab" : "Muassasa"}
+                          </span>
+                          {nextPoint.mahalla && (
+                            <span className="text-[8px] font-extrabold text-[#749df8] bg-[#1e293b]/40 px-1 py-0.2 rounded border border-slate-800">
+                              {nextPoint.mahalla} MFY
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsBottomHudExpanded(true); // Reset timer active
+                          const maxSteps = selectedLocations.length + (isRoundtrip ? 1 : 0) - 1;
+                          if (navigationStepIndex < maxSteps) {
+                            setNavigationStepIndex(navigationStepIndex + 1);
+                          } else {
+                            showToast("Siz barcha ob'ektlarga muvaffaqiyatli yetib keldingiz!", "success");
+                          }
+                        }}
+                        className="p-1 hover:bg-slate-900 rounded-lg text-slate-400 hover:text-white transition-all scale-95 shrink-0 cursor-pointer"
+                        title="Keyingi ob'ekt"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Compact row control actions: Map Provider + Tugatish */}
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      {/* End route button (Tugatish) inside bottom HUD */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsNavigationActive(false);
+                          showToast("Navigatsiya yakunlandi.", "info");
+                        }}
+                        className="p-1 px-2.5 bg-red-950/80 hover:bg-red-900 text-[10px] font-extrabold rounded-lg border border-red-900/40 text-red-200 flex items-center space-x-1 transition-all cursor-pointer active:scale-95 shrink-0"
+                        title="Yo'nalishni tugatish"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                        <span>Tugatish</span>
+                      </button>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsBottomHudExpanded(true); // Reset timer active
+                          const nextSource = mapSource === 'yandex' ? 'google' : mapSource === 'google' ? 'google_sat' : 'yandex';
+                          setMapSource(nextSource);
+                          showToast(`Xarita o'zgartirildi: ${nextSource.toUpperCase()}`, "success");
+                        }}
+                        className="p-1 px-2.5 bg-slate-900 hover:bg-slate-850 text-[10px] font-extrabold rounded-lg border border-slate-800 text-slate-300 flex items-center space-x-1 transition-all active:scale-95 cursor-pointer shrink-0"
+                        title="Xaritani o'zgartirish"
+                        type="button"
+                      >
+                        <MapIcon className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                        <span>{mapSource === 'yandex' ? "Yandex" : mapSource === 'google' ? "Google" : "Sputnik"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Traffic & Distance Journey Progress Tracker line */}
+                  <div className="space-y-0.5" onClick={(e) => { e.stopPropagation(); setIsBottomHudExpanded(false); }}>
+                    <div className="relative w-full h-1 rounded-full overflow-hidden bg-slate-900 border border-slate-800/80">
+                      <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 via-yellow-400 via-amber-500 to-rose-500"></div>
+                      <div 
+                        className="absolute top-0 right-0 h-full bg-slate-950/80 transition-all duration-700" 
+                        style={{ width: `${100 - (userLocation ? progressPercent : 0)}%` }}
+                      ></div>
+                      <div 
+                        className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-white shadow-xl border-2 border-[#1e61f0] flex items-center justify-center transition-all duration-700"
+                        style={{ left: `calc(${userLocation ? progressPercent : 0}% - 5px)` }}
+                      >
+                        <div className="w-1 h-1 rounded-full bg-[#1e61f0]"></div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center text-[7.5px] text-slate-500 font-extrabold px-0.5">
+                      <span>START</span>
+                      <span>YOPISH UCHUN BOSING</span>
+                      <span>FINISH</span>
+                    </div>
+                  </div>
+
+                  {/* High-accuracy metrics board (Significantly smaller & simpler layout) */}
+                  <div className="grid grid-cols-3 gap-1 divide-x divide-slate-800 bg-slate-900/30 p-1 rounded-xl border border-slate-900/40 text-center">
+                    <div>
+                      <span className="text-[7.5px] text-slate-500 font-extrabold block uppercase tracking-wider">MUDDAT</span>
+                      <span className="font-extrabold text-xs text-emerald-400 block mt-0.5">
+                        {userLocation ? `${etaMinutes} daq` : "..."}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[7.5px] text-slate-500 font-extrabold block uppercase tracking-wider">MASOFA</span>
+                      <span className="font-extrabold text-xs text-blue-400 block mt-0.5">
+                        {distanceText}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[7.5px] text-slate-500 font-extrabold block uppercase tracking-wider">YETIB KELISH</span>
+                      <span className="font-extrabold text-xs text-amber-500 block mt-0.5">
+                        {userLocation ? getEtaTime(etaMinutes) : "..."}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
-            </div>
-
-            {/* Bottom HUD: Control Panel */}
-            <div className="pointer-events-auto w-full max-w-sm mx-auto bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.3)] border border-slate-100 p-4 shrink-0 flex flex-col space-y-3 md:space-y-4 animate-in slide-in-from-bottom-4 duration-300">
-              
-              <div className="flex items-center justify-between pb-1 gap-2">
-                <div className="flex items-center space-x-1 shrink-0">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 block"></span>
-                  <span className="text-xs font-black tracking-tight text-slate-800 shrink-0">
-                    Navigator Paneli
-                  </span>
-                </div>
-                
-                <div className="flex space-x-1.5 shrink-0">
-                  {/* Hide non-route markers toggle */}
-                  <button
-                    onClick={() => setHideOtherMarkersDuringTrip(!hideOtherMarkersDuringTrip)}
-                    type="button"
-                    className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 border transition-all cursor-pointer ${hideOtherMarkersDuringTrip ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
-                    title="Xaritadagi boshqa muassasa ob'ektlarini ko'rsatish/yashirish"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>{hideOtherMarkersDuringTrip ? "Faqat yo'nalish" : "Barcha muassasalar"}</span>
-                  </button>
-
-                  {/* Auto center toggle indicator */}
-                  <button
-                    onClick={() => setIsAutoCenter(!isAutoCenter)}
-                    type="button"
-                    className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 border transition-all cursor-pointer ${isAutoCenter ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
-                    title="Xaritani avtomatik ravishda mashina ustida saqlab turish"
-                  >
-                    <LocateFixed className={`w-3.5 h-3.5 ${isAutoCenter ? 'animate-pulse text-blue-600' : ''}`} />
-                    <span>{isAutoCenter ? "Avto" : "Erkin"}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Steps control buttons */}
-              <div className="flex space-x-2.5">
-                <button
-                  onClick={() => {
-                    const nextVal = Math.max(1, navigationStepIndex - 1);
-                    setNavigationStepIndex(nextVal);
-                  }}
-                  disabled={navigationStepIndex <= 1}
-                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-xl font-bold text-xs md:text-sm text-slate-800 flex items-center justify-center space-x-1.5 transition-all active:scale-95 border border-slate-200 shrink-0 cursor-pointer disabled:cursor-not-allowed"
-                >
-                  <ChevronLeft className="w-5 h-5 shrink-0" />
-                  <span>Ortga</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    const maxSteps = selectedLocations.length + (isRoundtrip ? 1 : 0) - 1;
-                    if (navigationStepIndex < maxSteps) {
-                      setNavigationStepIndex(navigationStepIndex + 1);
-                    } else {
-                      showToast("Siz marshrut oxiriga yetib keldingiz! Tabriklaymiz!", "success");
-                    }
-                  }}
-                  className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-md hover:shadow-lg hover:shadow-indigo-500/10 shrink-0 cursor-pointer"
-                >
-                  <span>Keyingi</span>
-                  <ChevronRight className="w-5 h-5 shrink-0" />
-                </button>
-              </div>
-
-              {/* Complete journey / abort navigation */}
-              <button
-                onClick={() => {
-                  setIsNavigationActive(false);
-                  showToast("Navigatsiya rejimi yakunlandi.", "info");
-                }}
-                className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 cursor-pointer shrink-0 animate-pulse"
-              >
-                <XCircle className="w-4 h-4 shrink-0" />
-                <span>Navigatsiyani Yakunlash</span>
-              </button>
-
             </div>
 
           </div>
@@ -2030,7 +2530,7 @@ export default function MapComponent() {
                          Google Sun'iy yo'ldosh
                       </button>
                       <button 
-                         onClick={() => {}} style={{ display: 'none' }}
+                         onClick={() => setMapSource('yandex')}
                          className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${mapSource === 'yandex' ? 'bg-indigo-50 border-indigo-400 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                       >
                          Yandex Maps
@@ -2389,6 +2889,8 @@ export default function MapComponent() {
       )}
 
       <MapContainer 
+        key={mapSource}
+        crs={mapSource === 'yandex' ? L.CRS.EPSG3395 : L.CRS.EPSG3857}
         center={center} 
         zoom={12} 
         className={`w-full h-screen z-0 print:hidden ${isMapLocked ? 'pointer-events-none select-none' : 'pointer-events-auto'}`}
@@ -2418,7 +2920,7 @@ export default function MapComponent() {
             url="https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"
           />
         )}
-        {false && (
+         {mapSource === 'yandex' && (
           <TileLayer
             attribution="&copy; Yandex Maps"
             url="https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}&scale=1&lang=uz_UZ"
@@ -2654,7 +3156,16 @@ export default function MapComponent() {
           />
         )}
         {routeGeometry && (
-          <Polyline positions={routeGeometry} color="#3b82f6" weight={6} opacity={0.8} />
+          isNavigationActive ? (
+            <>
+              {/* Deep green shadow outline */}
+              <Polyline positions={routeGeometry} color="#0b5c1c" weight={11} opacity={0.65} />
+              {/* High-visibility active neon green route line */}
+              <Polyline positions={routeGeometry} color="#10b981" weight={6.5} opacity={1.0} />
+            </>
+          ) : (
+            <Polyline positions={routeGeometry} color="#1e61f0" weight={6} opacity={0.85} />
+          )
         )}
         {multiRouteGeometries && multiRouteGeometries.map((m, idx) => (
           <Polyline key={idx} positions={m.coords} color={m.color} weight={6} opacity={0.8} />
@@ -3372,14 +3883,11 @@ export default function MapComponent() {
               showToast("Yo'lning tezlik cheklovi qo'lda o'zgartirildi", "info");
             }}
             title="Tezlik cheklovini o'zgartirish uchun bosing"
-            className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-white border-[6px] md:border-[8px] border-red-500 shadow-2xl flex items-center justify-center cursor-pointer select-none active:scale-95 transition-transform duration-100"
+            className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-white border-[5px] md:border-[6px] border-red-500 shadow-2xl flex items-center justify-center cursor-pointer select-none active:scale-95 transition-transform duration-100"
           >
-            <span className="font-sans font-black text-2xl md:text-3xl text-slate-900 tracking-tighter">
+            <span className="font-sans font-black text-xl md:text-2xl text-slate-900 tracking-tighter">
               {speedLimit}
             </span>
-          </div>
-          <div className="bg-slate-950/85 backdrop-blur-sm px-2.5 py-0.5 rounded-md border border-slate-800 text-[8px] font-black tracking-widest text-amber-400 uppercase text-center shadow-md">
-            Tezlik Cheklovi
           </div>
         </div>
       )}
