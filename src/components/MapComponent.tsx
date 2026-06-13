@@ -1784,7 +1784,7 @@ export default function MapComponent() {
       </div>
 
       {/* Modal - Add/Edit Location */}
-      {(isAddModalOpen || isEditModalOpen) && currentUser && (
+      {(isAddModalOpen || isEditModalOpen) && currentUser && !isNavigationActive && (
         <div 
           className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {
@@ -1979,7 +1979,7 @@ export default function MapComponent() {
       )}
 
       {/* Settings Modal */}
-      {isSettingsOpen && (
+      {isSettingsOpen && !isNavigationActive && (
         <div 
           className="absolute inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {

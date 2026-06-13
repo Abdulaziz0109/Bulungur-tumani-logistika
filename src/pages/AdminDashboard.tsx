@@ -5,13 +5,14 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { useNavigate } from 'react-router-dom';
-import { Users, LogOut, Plus, Shield, User, X, Map as MapIcon, ArrowLeft, MessageSquare, Check, XCircle } from 'lucide-react';
+import { Users, LogOut, Plus, Shield, User, X, Map as MapIcon, ArrowLeft, MessageSquare, Check, XCircle, Camera, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'users' | 'requests'>('users');
+  const [reports, setReports] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'users' | 'requests' | 'reports'>('users');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   
@@ -29,7 +30,24 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchUsers();
     fetchRequests();
+    fetchReports();
   }, []);
+
+  const fetchReports = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'reports'));
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort newest photo reports first
+      list.sort((a: any, b: any) => {
+        const dateA = new Date(a.createdAt || 0).getTime();
+        const dateB = new Date(b.createdAt || 0).getTime();
+        return dateB - dateA;
+      });
+      setReports(list);
+    } catch (e) {
+      console.error("Failed to load reports:", e);
+    }
+  };
 
   const fetchRequests = async () => {
     try {
@@ -167,6 +185,14 @@ export default function AdminDashboard() {
               </button>
             </li>
             <li>
+              <button 
+                onClick={() => setActiveTab('reports')}
+                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-bold text-sm transition-colors ${activeTab === 'reports' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}>
+                <Camera className="w-5 h-5" />
+                <span>Foto-Hisobotlar (Bot)</span>
+              </button>
+            </li>
+            <li>
               <button onClick={() => navigate('/')} className="w-full flex items-center space-x-3 px-4 py-3 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-xl font-semibold text-sm transition-colors">
                 <MapIcon className="w-5 h-5" />
                 <span>Xaritaga qaytish</span>
@@ -193,13 +219,38 @@ export default function AdminDashboard() {
            <h1 className="text-xl font-extrabold text-slate-900">Iqtisodchi Paneli</h1>
         </div>
 
+        {/* Mobile-friendly horizontal tabs */}
+        <div className="flex md:hidden bg-slate-105 p-1 rounded-xl mb-6 gap-1 shrink-0">
+          <button 
+            type="button"
+            onClick={() => setActiveTab('users')}
+            className={`flex-1 text-center py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'users' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}
+          >
+            Xodimlar
+          </button>
+          <button 
+            type="button"
+            onClick={() => setActiveTab('requests')}
+            className={`flex-1 text-center py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'requests' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}
+          >
+            Takliflar ({requests.length})
+          </button>
+          <button 
+            type="button"
+            onClick={() => setActiveTab('reports')}
+            className={`flex-1 text-center py-2 rounded-lg font-bold text-xs transition-all ${activeTab === 'reports' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600'}`}
+          >
+            Hisobotlar ({reports.length})
+          </button>
+        </div>
+
         <div className="flex justify-between items-center mb-8">
           <div>
             <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-              {activeTab === 'users' ? "Foydalanuvchilar ro'yxati" : "Xaritadagi o'zgarish takliflari"}
+              {activeTab === 'users' ? "Foydalanuvchilar ro'yxati" : activeTab === 'requests' ? "Xaritadagi o'zgarish takliflari" : "TG Bot Foto-Hisobotlari"}
             </h2>
             <p className="text-slate-500 text-sm mt-1">
-              {activeTab === 'users' ? "Tizimga kirish huquqiga ega barcha odamlar" : "Foydalanuvchilar tomondan yuborilgan yangi joylashuv yoki tahrirlashlar"}
+              {activeTab === 'users' ? "Tizimga kirish huquqiga ega barcha odamlar" : activeTab === 'requests' ? "Foydalanuvchilar tomondan yuborilgan yangi joylashuv yoki tahrirlashlar" : "Telegram bot orqali yo'ldan yuborilgan fotofaktlar"}
             </p>
           </div>
           {activeTab === 'users' && (
@@ -274,8 +325,8 @@ export default function AdminDashboard() {
             </tbody>
           </table>
         </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        ) : activeTab === 'requests' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
             {requests.map((req) => (
               <div key={req.id} className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 flex flex-col justify-between">
                  <div>
@@ -306,6 +357,68 @@ export default function AdminDashboard() {
             {requests.length === 0 && (
               <div className="col-span-full py-12 text-center text-slate-500">
                 Hozircha o'zgarishlar tasdiqlash uchun kutilmayapti.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+            {reports.map((report) => (
+              <div key={report.id} className="bg-white rounded-[2rem] shadow-sm border border-slate-100 p-6 flex flex-col justify-between overflow-hidden group">
+                 <div>
+                    <div className="flex items-center justify-between mb-4">
+                       <span className="px-2.5 py-1 text-[10px] uppercase tracking-widest font-extrabold bg-blue-50 text-blue-700 rounded-lg flex items-center">
+                         <Camera className="w-34 h-3.5 mr-1" /> Telegram Bot
+                       </span>
+                       <span className="text-[10px] text-slate-400 font-bold flex items-center uppercase tracking-wide">
+                         <Clock className="w-3.5 h-3.5 mr-1 text-slate-300" /> {report.createdAt ? new Date(report.createdAt).toLocaleDateString('uz-UZ') : "Noma'lum"}
+                       </span>
+                    </div>
+
+                    <div className="flex items-center space-x-3 mb-4 border-b border-slate-50 pb-3">
+                       <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-indigo-600 font-black text-xs uppercase">
+                         {report.userFullname ? report.userFullname.substring(0, 2) : "User"}
+                       </div>
+                       <div>
+                          <h4 className="font-extrabold text-slate-900 text-sm leading-tight">{report.userFullname || "Telegram Foydalanuvchi"}</h4>
+                          <p className="text-[10px] text-indigo-500 font-bold mt-0.5">
+                            {report.username ? `@${report.username}` : `ID: ${report.userId || "Noma'lum"}`}
+                          </p>
+                       </div>
+                    </div>
+
+                    <div className="relative mb-4 bg-slate-50 rounded-2xl overflow-hidden aspect-[4/3] border border-slate-100 flex items-center justify-center">
+                      <img 
+                        src={`/api/telegram-photo/${report.photoFileId}`} 
+                        alt="Telegram hisobot" 
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.src = "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=800&auto=format&fit=crop&q=60";
+                        }}
+                      />
+                    </div>
+
+                    {report.caption && (
+                      <p className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-100/50 mb-4 font-sans italic leading-relaxed">
+                        "{report.caption}"
+                      </p>
+                    )}
+                 </div>
+                 
+                 <a 
+                   href={`/api/telegram-photo/${report.photoFileId}`} 
+                   target="_blank" 
+                   rel="noopener noreferrer"
+                   className="w-full bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-extrabold py-3.5 rounded-xl text-center text-xs transition-colors flex justify-center items-center space-x-1.5 cursor-pointer leading-none"
+                 >
+                    <span>Asl rasmni ko'rish (Full size)</span>
+                 </a>
+              </div>
+            ))}
+            {reports.length === 0 && (
+              <div className="col-span-full py-12 text-center text-slate-500">
+                Telegram bot orqali hali rasm/hisobotlar yuborilmagan.
               </div>
             )}
           </div>

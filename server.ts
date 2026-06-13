@@ -88,6 +88,51 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
     }
   });
 
+  // SECURE API ROUTE: Securely proxies telegram photo to frontend without exposing TELEGRAM_BOT_TOKEN
+  app.get("/api/telegram-photo/:fileId", async (req, res) => {
+    try {
+      const { fileId } = req.params;
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (!botToken || botToken === "yoto_telegram_bot_token" || botToken.trim() === "") {
+        return res.status(400).send("Telegram Bot Token is not configured or is using default value.");
+      }
+
+      const fileInfoRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+      if (!fileInfoRes.ok) {
+        return res.status(400).send("Could not retrieve file metadata from Telegram servers.");
+      }
+
+      const fileInfo = await fileInfoRes.json() as any;
+      if (!fileInfo.ok || !fileInfo.result?.file_path) {
+        return res.status(404).send("File path metadata is empty or denied.");
+      }
+
+      const filePath = fileInfo.result.file_path;
+      const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+
+      const imgRes = await fetch(fileUrl);
+      if (!imgRes.ok) {
+        return res.status(400).send("Failed to stream raw file from Telegram file nodes.");
+      }
+
+      const arrayBuffer = await imgRes.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      const ext = path.extname(filePath).toLowerCase();
+      let contentType = "image/jpeg";
+      if (ext === ".png") contentType = "image/png";
+      else if (ext === ".gif") contentType = "image/gif";
+      else if (ext === ".webp") contentType = "image/webp";
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=172800"); // Cache for 48 hours to be extremely efficient
+      return res.send(buffer);
+    } catch (err) {
+      console.error("Error in Secure Telegram Photo Proxy:", err);
+      return res.status(500).send("Internal Server Secure Image Proxy Error");
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
