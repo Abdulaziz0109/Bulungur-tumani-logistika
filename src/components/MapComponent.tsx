@@ -245,6 +245,8 @@ export default function MapComponent() {
   const [isNavigationActive, setIsNavigationActive] = useState<boolean>(false);
   const [navigationStepIndex, setNavigationStepIndex] = useState<number>(1);
   const [isAutoCenter, setIsAutoCenter] = useState<boolean>(true);
+  const [hideOtherMarkersDuringTrip, setHideOtherMarkersDuringTrip] = useState<boolean>(true);
+  const [speedLimit, setSpeedLimit] = useState<number>(60);
 
   // Active Geolocation watcher for HUD Navigation mode
   useEffect(() => {
@@ -338,6 +340,32 @@ export default function MapComponent() {
 
   const { role, currentUser } = useAuth();
   const navigate = useNavigate();
+
+  const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const lat1Rad = lat1 * (Math.PI / 180);
+    const lat2Rad = lat2 * (Math.PI / 180);
+    const y = Math.sin(dLon) * Math.cos(lat2Rad);
+    const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+    let brng = Math.atan2(y, x) * (180 / Math.PI);
+    return (brng + 360) % 360;
+  };
+
+  // Recommended speed limit adjuster based on current step destination type
+  useEffect(() => {
+    if (isNavigationActive && selectedLocations.length > 0) {
+      const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
+      const nextPoint = selectedLocations[nextIndex];
+      if (nextPoint) {
+        if (nextPoint.type === 'maktab' || nextPoint.type === 'dmtt' || nextPoint.type === 'bogcha') {
+          // Schools and kindergartens require lower speed limits limit like 30 km/h or 50 km/h in Uzbekistan
+          setSpeedLimit(30);
+        } else {
+          setSpeedLimit(60);
+        }
+      }
+    }
+  }, [isNavigationActive, navigationStepIndex, selectedLocations, isRoundtrip]);
 
   const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; // Radius of the earth in km
@@ -447,7 +475,13 @@ export default function MapComponent() {
 
   // Component to handle map clicks for picking coordinates
   function LocationPicker() {
-    useMapEvents({
+    const map = useMapEvents({
+      dragstart() {
+        map.closePopup();
+      },
+      movestart() {
+        map.closePopup();
+      },
       click(e) {
         if (isPickingRoutePoint) {
            const customLocation: Location = {
@@ -1115,6 +1149,9 @@ export default function MapComponent() {
   };
 
   const filteredLocations = locations.filter(loc => {
+    if (isNavigationActive && hideOtherMarkersDuringTrip) {
+      if (!selectedLocations.find(l => l.id === loc.id)) return false;
+    }
     if (hideUnselected && selectedLocations.length > 0) {
       if (!selectedLocations.find(l => l.id === loc.id)) return false;
     }
@@ -1614,22 +1651,37 @@ export default function MapComponent() {
             {/* Bottom HUD: Control Panel */}
             <div className="pointer-events-auto w-full max-w-sm mx-auto bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.3)] border border-slate-100 p-4 shrink-0 flex flex-col space-y-3 md:space-y-4 animate-in slide-in-from-bottom-4 duration-300">
               
-              <div className="flex items-center justify-between pb-1">
-                <div className="flex items-center space-x-1">
+              <div className="flex items-center justify-between pb-1 gap-2">
+                <div className="flex items-center space-x-1 shrink-0">
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-600 block"></span>
-                  <span className="text-xs font-black tracking-tight text-slate-800">
+                  <span className="text-xs font-black tracking-tight text-slate-800 shrink-0">
                     Navigator Paneli
                   </span>
                 </div>
                 
-                {/* Auto center toggle indicator */}
-                <button
-                  onClick={() => setIsAutoCenter(!isAutoCenter)}
-                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1.5 border transition-all cursor-pointer ${isAutoCenter ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
-                >
-                  <LocateFixed className={`w-3.5 h-3.5 ${isAutoCenter ? 'animate-pulse text-blue-600' : ''}`} />
-                  <span>{isAutoCenter ? "Avto-boshqaruv" : "Muzlatilgan"}</span>
-                </button>
+                <div className="flex space-x-1.5 shrink-0">
+                  {/* Hide non-route markers toggle */}
+                  <button
+                    onClick={() => setHideOtherMarkersDuringTrip(!hideOtherMarkersDuringTrip)}
+                    type="button"
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 border transition-all cursor-pointer ${hideOtherMarkersDuringTrip ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
+                    title="Xaritadagi boshqa muassasa ob'ektlarini ko'rsatish/yashirish"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>{hideOtherMarkersDuringTrip ? "Faqat yo'nalish" : "Barcha muassasalar"}</span>
+                  </button>
+
+                  {/* Auto center toggle indicator */}
+                  <button
+                    onClick={() => setIsAutoCenter(!isAutoCenter)}
+                    type="button"
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 border transition-all cursor-pointer ${isAutoCenter ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
+                    title="Xaritani avtomatik ravishda mashina ustida saqlab turish"
+                  >
+                    <LocateFixed className={`w-3.5 h-3.5 ${isAutoCenter ? 'animate-pulse text-blue-600' : ''}`} />
+                    <span>{isAutoCenter ? "Avto" : "Erkin"}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Steps control buttons */}
@@ -2372,29 +2424,57 @@ export default function MapComponent() {
            />
         )}
 
-           {userLocation && (
-          <Marker 
-            position={userLocation}
-            icon={L.divIcon({
-              className: 'pulsing-gps-marker bg-transparent border-0',
-              html: `
-                <div style="position: relative; width: 34px; height: 42px; pointer-events: none;">
-                  <div class="animate-ping" style="position: absolute; top: 0; left: 0; width: 34px; height: 34px; background-color: #3b82f6; border-radius: 50%; opacity: 0.7;"></div>
-                  <div style="background-color: #3b82f6; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative; z-index: 10;">
-                    🙋‍♂️
-                    <div style="position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #3b82f6;"></div>
+        {userLocation && (() => {
+          const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
+          const nextPoint = selectedLocations[nextIndex];
+          let bearingAngle = 0;
+          if (userLocation && nextPoint) {
+            bearingAngle = calculateBearing(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
+          }
+          return (
+            <Marker 
+              position={userLocation}
+              icon={L.divIcon({
+                className: 'pulsing-gps-marker bg-transparent border-0',
+                html: isNavigationActive ? `
+                  <div style="position: relative; width: 44px; height: 44px; pointer-events: none; display: flex; align-items: center; justify-content: center;">
+                    <!-- Trailing dust particles -->
+                    <div class="dust-particle dust-1"></div>
+                    <div class="dust-particle dust-2"></div>
+                    <div class="dust-particle dust-3"></div>
+                    
+                    <!-- Pulse effect -->
+                    <div class="animate-ping" style="position: absolute; width: 36px; height: 36px; background-color: rgba(59, 130, 246, 0.25); border-radius: 50%;"></div>
+                    
+                    <!-- Rotated wrapper -->
+                    <div style="transform: rotate(${bearingAngle}deg); transition: transform 0.3s ease-out; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; position: relative; z-index: 20;">
+                      <!-- Custom 3D Vector Car Indicator -->
+                      <div style="background-color: #3b82f6; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 4px 10px rgba(59, 130, 246, 0.5); color: white;">
+                        <svg style="width: 14px; height: 14px; fill: white;" viewBox="0 0 24 24">
+                          <path d="M12,2L4.5,20.29L5.21,21L12,18L18.79,21L19.5,20.29L12,2Z" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              `,
-              iconSize: [34, 42],
-              iconAnchor: [17, 40]
-            })}
-          >
-            <Tooltip direction="top" offset={[0, -20]} opacity={0.9} className="border-0 shadow-lg rounded-xl font-sans font-bold text-blue-700 bg-white/90 backdrop-blur-sm px-3 py-2 text-xs">
-              📍 Siz shu yerdasiz
-            </Tooltip>
-          </Marker>
-        )}
+                ` : `
+                  <div style="position: relative; width: 34px; height: 42px; pointer-events: none;">
+                    <div class="animate-ping" style="position: absolute; top: 0; left: 0; width: 34px; height: 34px; background-color: #3b82f6; border-radius: 50%; opacity: 0.7;"></div>
+                    <div style="background-color: #3b82f6; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative; z-index: 10;">
+                      🙋‍♂️
+                      <div style="position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #3b82f6;"></div>
+                    </div>
+                  </div>
+                `,
+                iconSize: isNavigationActive ? [44, 44] : [34, 42],
+                iconAnchor: isNavigationActive ? [22, 22] : [17, 40]
+              })}
+            >
+              <Tooltip direction="top" offset={[0, isNavigationActive ? -10 : -20]} opacity={0.9} className="border-0 shadow-lg rounded-xl font-sans font-bold text-blue-700 bg-white/90 backdrop-blur-sm px-3 py-2 text-xs">
+                {isNavigationActive ? "🚗 Sizning yo'nalishingiz" : "📍 Siz shu yerdasiz"}
+              </Tooltip>
+            </Marker>
+          );
+        })()}
 
         {/* Navigation Guidance Line */}
         {isNavigationActive && userLocation && selectedLocations.length > 1 && (
@@ -2412,44 +2492,58 @@ export default function MapComponent() {
             key={loc.id} 
             position={[loc.lat, loc.lng]} 
             icon={createDivIcon(loc.type, loc.name)}
-            eventHandlers={{ click: () => handleMarkerClick(loc) }}
+            eventHandlers={{ 
+              click: (e) => { 
+                handleMarkerClick(loc);
+                e.target.openPopup();
+              },
+              mouseover: (e) => {
+                e.target.openPopup();
+              },
+              mouseout: (e) => {
+                if (editingLandmarkId !== loc.id) {
+                  e.target.closePopup();
+                }
+              }
+            }}
             ref={(el) => { markerRefs.current[loc.id] = el; }}
           >
             <Popup offset={[0, -20]}>
-              <div className="font-sans text-center mt-1">
-                <h3 className="font-extrabold text-[13px] text-slate-800 leading-tight mb-1">{loc.name}</h3>
-                <div className="flex flex-wrap gap-1 justify-center mb-2">
-                  <span className="text-[9px] font-bold text-slate-500 capitalize bg-slate-100 rounded px-1.5 py-0.5">
+              <div className="font-sans text-center mt-0.5 max-w-[190px]">
+                <h3 className="font-extrabold text-[12px] text-white leading-tight mb-1">{loc.name}</h3>
+                <div className="flex flex-wrap gap-1 justify-center mb-1.5">
+                  <span className="text-[8px] font-bold text-slate-300 capitalize bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">
                     {loc.type === 'dmtt' ? "Bog'cha (DMTT)" : loc.type === 'maktab' ? "Maktab" : "Tashkilot"}
                   </span>
                   {loc.mahalla && (
-                    <span className="text-[9px] font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded px-1.5 py-0.5" title="Mahalla">
+                    <span className="text-[8px] font-bold text-blue-300 bg-blue-950/60 border border-blue-900/40 rounded px-1.5 py-0.5" title="Mahalla">
                       {loc.mahalla}
                     </span>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-600 mb-2 px-1 text-left border-t border-b border-dashed border-slate-100 py-1.5 my-2">
-                  <div className="flex justify-between items-center font-bold mb-1">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold font-sans">Mo'ljal:</span>
+                
+                <div className="text-[9px] text-slate-300 mb-1.5 px-1 text-left border-t border-b border-dashed border-slate-700/60 py-1 my-1">
+                  <div className="flex justify-between items-center font-bold mb-0.5">
+                    <span className="text-[8px] text-slate-400 uppercase tracking-wider font-bold">Mo'ljal:</span>
                     {editingLandmarkId !== loc.id && (
                       <button 
                         onClick={(e) => { 
                           e.stopPropagation();
                           startEditingLandmark(loc);
                         }}
-                        className="text-[9px] text-blue-600 hover:text-blue-800 font-bold cursor-pointer underline decoration-dotted"
+                        className="text-[8px] text-blue-400 hover:text-blue-300 font-bold cursor-pointer underline decoration-dotted"
                       >
                         Tahrirlash
                       </button>
                     )}
                   </div>
                   {editingLandmarkId === loc.id ? (
-                    <div className="mt-1 flex flex-col space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="mt-1 flex flex-col space-y-1" onClick={(e) => e.stopPropagation()}>
                       <textarea 
                         value={tempLandmark}
                         onChange={(e) => setTempLandmark(e.target.value)}
                         placeholder="Masalan: do'kon qarshisida..."
-                        className="w-full p-1 text-[10px] bg-slate-50 border border-slate-300 rounded outline-none focus:border-blue-500 font-medium resize-none h-[42px]"
+                        className="w-full p-1 text-[9px] bg-slate-800 border border-slate-700 text-white rounded outline-none focus:border-blue-500 font-medium resize-none h-[38px]"
                         disabled={isModerating}
                         maxLength={200}
                       />
@@ -2457,55 +2551,41 @@ export default function MapComponent() {
                         <button 
                           disabled={isModerating}
                           onClick={(e) => { e.stopPropagation(); setEditingLandmarkId(null); }}
-                          className="px-1.5 py-0.5 text-[8px] text-slate-500 font-bold border border-slate-200 rounded hover:bg-slate-50 cursor-pointer"
+                          className="px-1 py-0.5 text-[8px] text-slate-400 font-bold border border-slate-700 rounded hover:bg-slate-800 cursor-pointer"
                         >
-                          Bekor qilish
+                          Ortga
                         </button>
                         <button 
                           disabled={isModerating}
                           onClick={(e) => { e.stopPropagation(); saveLandmark(loc); }}
-                          className="px-1.5 py-0.5 text-[8px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded cursor-pointer disabled:opacity-50"
+                          className="px-1 py-0.5 text-[8px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded cursor-pointer disabled:opacity-50"
                         >
-                          {isModerating ? "Tekshirilmoqda..." : "Saqlash"}
+                          {isModerating ? "..." : "Saqlash"}
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-slate-700 italic bg-slate-50 rounded px-1.5 py-1 text-[10px] border border-slate-100 leading-normal font-medium">
+                    <div className="text-slate-200 italic bg-slate-900/60 rounded px-1.5 py-0.5 text-[9px] border border-slate-800/80 leading-normal font-medium max-h-[48px] overflow-y-auto">
                       {loc.landmark || "Kiritilmagan"}
                     </div>
                   )}
                 </div>
+
                 {loc.cadastre && (
-                  <div className="flex justify-between items-center text-[9px] text-slate-600 mb-2 px-1">
-                     <span className="font-semibold shrink-0">Kadastr:</span> <span className="font-mono font-bold text-slate-900 border-b border-dashed border-slate-300 select-all" title="Nusxalash uchun bosing">{loc.cadastre}</span>
+                  <div className="flex justify-between items-center text-[8px] text-slate-300 mb-1 px-1">
+                     <span className="font-semibold shrink-0">Kadastr:</span> <span className="font-mono font-bold text-slate-200 border-b border-dashed border-slate-700 select-all">{loc.cadastre}</span>
                   </div>
                 )}
-                <div className="flex flex-col space-y-1.5 pt-1 border-t border-slate-100">
+
+                {currentUser && (
                   <button 
-                    onClick={(e) => { e.stopPropagation(); handleMarkerClick(loc); }}
-                    className="print:hidden w-full px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
+                    onClick={(e) => { e.stopPropagation(); openEditModal(loc); }}
+                    className="print:hidden w-full mt-1.5 py-1 text-[8px] font-bold text-amber-400 bg-amber-400/10 hover:bg-amber-400/25 border border-amber-400/20 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+                    title="Joylashuv xatomi? To'g'irlash"
                   >
-                    Marshrutga qo'shish
+                    {role === 'admin' ? "To'g'irlash" : "To'g'irlash (Taklif)"}
                   </button>
-                  {currentUser && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); openEditModal(loc); }}
-                      className="print:hidden w-full px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center cursor-pointer"
-                      title="Joylashuv xatomi? To'g'irlash"
-                    >
-                      {role === 'admin' ? "To'g'irlash" : "To'g'irlash (Taklif)"}
-                    </button>
-                  )}
-                  {(currentUser && role === 'admin') && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDeleteLocation(loc.id); }}
-                      className="print:hidden w-full px-2 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
-                    >
-                      O'chirish
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
             </Popup>
           </Marker>
@@ -2517,18 +2597,18 @@ export default function MapComponent() {
             key={loc.id} 
             position={[loc.lat, loc.lng]} 
             icon={createDivIcon(loc.type, loc.name)}
+            eventHandlers={{ 
+              mouseover: (e) => {
+                e.target.openPopup();
+              },
+              mouseout: (e) => {
+                e.target.closePopup();
+              }
+            }}
           >
             <Popup offset={[0, -20]}>
-              <div className="font-sans text-center mt-1">
-                <h3 className="font-extrabold text-[13px] text-slate-800 leading-tight mb-1">{loc.name}</h3>
-                <div className="flex flex-col space-y-1.5 pt-1 border-t border-slate-100">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); removeLocation(e, loc.id); }}
-                    className="print:hidden w-full px-2 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center justify-center"
-                  >
-                    Marshrutdan o'chirish
-                  </button>
-                </div>
+              <div className="font-sans text-center mt-0.5 max-w-[190px]">
+                <h3 className="font-extrabold text-[12px] text-white leading-tight">{loc.name}</h3>
               </div>
             </Popup>
           </Marker>
@@ -2972,6 +3052,14 @@ export default function MapComponent() {
                      setNavigationStepIndex(1);
                      setIsAutoCenter(true);
                      setIsMobilePanelOpen(false);
+                     if (selectedLocations.length > 0) {
+                       const startLat = selectedLocations[0].lat;
+                       const startLng = selectedLocations[0].lng;
+                       setUserLocation([startLat, startLng]);
+                       if (mapRef.current) {
+                         mapRef.current.setView([startLat, startLng], 17);
+                       }
+                     }
                      showToast("O'zimizning navigator faollashdi! Qurilmangiz GPS signali orqali yo'lingiz kuzatib boriladi.", "success");
                    }}
                    className="w-full py-3.5 mt-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-95 text-white rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-lg shadow-indigo-600/20 shrink-0 cursor-pointer"
@@ -3203,6 +3291,28 @@ export default function MapComponent() {
               <div className="mb-12 text-left">Tuzdi:<br/>Bosh Iqtisodchi</div>
               <div className="border-t border-slate-900 w-64 mx-auto pt-2 text-sm text-slate-500 uppercase">(Imzo, F.I.O)</div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Absolute floating speed limit sign overlay */}
+      {isNavigationActive && (
+        <div className="absolute top-4 right-4 z-[999] pointer-events-auto flex flex-col items-center space-y-1 animate-in zoom-in-75 duration-300">
+          <div 
+            onClick={() => {
+              // Cycles speed limit manually: 30 -> 50 -> 60 -> 70
+              setSpeedLimit(prev => prev === 70 ? 30 : prev === 60 ? 70 : prev === 50 ? 60 : prev === 30 ? 50 : 60);
+              showToast("Yo'lning tezlik cheklovi qo'lda o'zgartirildi", "info");
+            }}
+            title="Tezlik cheklovini o'zgartirish uchun bosing"
+            className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-white border-[6px] md:border-[8px] border-red-500 shadow-2xl flex items-center justify-center cursor-pointer select-none active:scale-95 transition-transform duration-100"
+          >
+            <span className="font-sans font-black text-2xl md:text-3xl text-slate-900 tracking-tighter">
+              {speedLimit}
+            </span>
+          </div>
+          <div className="bg-slate-950/85 backdrop-blur-sm px-2.5 py-0.5 rounded-md border border-slate-800 text-[8px] font-black tracking-widest text-amber-400 uppercase text-center shadow-md">
+            Tezlik Cheklovi
           </div>
         </div>
       )}
