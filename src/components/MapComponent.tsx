@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, Volume2 } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, Volume2, QrCode, Smartphone } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -292,6 +292,8 @@ export default function MapComponent() {
   // QR code states
   const [qrMapSelected, setQrMapSelected] = useState<'google' | 'yandex'>('google');
   const [selectedRouteQrIdx, setSelectedRouteQrIdx] = useState<number>(0);
+  const [isQrOpen, setIsQrOpen] = useState<boolean>(true);
+  const [isRouteStatsExpanded, setIsRouteStatsExpanded] = useState<boolean>(false);
 
   // Sync route states with localStorage for offline caching
   useEffect(() => {
@@ -1370,6 +1372,10 @@ export default function MapComponent() {
           setRouteStats(stats);
           setOptimizedRouteDistance(trip.distance);
           autoSaveCalculatedRoute(orderedLocations, stats);
+          setIsRouteStatsExpanded(true);
+          setTimeout(() => {
+            setIsRouteStatsExpanded(false);
+          }, 1500);
         } else {
           showToast("Optimallashtirilgan yo'nalish topilmadi", "error");
         }
@@ -1433,6 +1439,10 @@ export default function MapComponent() {
         setRouteStats(stats);
         setOptimizedRouteDistance(totalDist);
         autoSaveCalculatedRoute(selectedLocations, stats);
+        setIsRouteStatsExpanded(true);
+        setTimeout(() => {
+          setIsRouteStatsExpanded(false);
+        }, 1500);
       }
     } catch (error) {
        console.error("TSP Xatolik:", error);
@@ -2984,13 +2994,39 @@ export default function MapComponent() {
           {/* Sticky Footer: Action buttons & navigation redirections */}
           <div className="print:hidden pt-3 border-t border-slate-100 shrink-0 space-y-3 bg-white/95">
             
+            {/* Real-time route length & duration statistics inside main panel */}
+            {routeStats && (
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex flex-col justify-center">
+                  <div className="flex items-center space-x-1 text-blue-600">
+                    <MapIcon className="w-3 h-3" />
+                    <span className="text-[9px] font-black uppercase tracking-wider">Masofa</span>
+                  </div>
+                  <div className="text-base font-black text-slate-900 mt-0.5">
+                    {(routeStats.distance / 1000).toFixed(1)} <span className="text-[10px] font-bold text-slate-500">km</span>
+                  </div>
+                </div>
+                <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl flex flex-col justify-center">
+                  <div className="flex items-center space-x-1 text-orange-600">
+                    <Clock className="w-3 h-3" />
+                    <span className="text-[9px] font-black uppercase tracking-wider">Vaqt</span>
+                  </div>
+                  <div className="text-base font-black text-slate-900 mt-0.5">
+                    {Math.round(routeStats.duration / 60)} <span className="text-[10px] font-bold text-slate-500">min</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Primary computation trigger */}
             <div className="w-full">
               <button 
-                className={`w-full py-3 rounded-2xl font-black text-xs md:text-sm flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                className={`w-full py-2.5 rounded-xl font-black text-xs md:text-sm flex items-center justify-center space-x-2 transition-all cursor-pointer ${
                   selectedLocations.length < 2 
                     ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg active:scale-95 shadow-indigo-600/10'
+                    : routeStats 
+                      ? 'bg-slate-50 border border-slate-200 hover:bg-slate-150 text-slate-700 active:scale-95'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg active:scale-95 shadow-indigo-600/10'
                 }`}
                 onClick={() => calculateOptimizedRoute()}
                 disabled={selectedLocations.length < 2 || isCalculating}
@@ -2998,13 +3034,13 @@ export default function MapComponent() {
               >
                  {isCalculating ? (
                     <span className="flex items-center">
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
+                      <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-slate-800 rounded-full animate-spin mr-2"></div>
                       Hisoblanmoqda...
                     </span>
                  ) : (
                     <span className="flex items-center space-x-1.5">
-                      <Navigation className="w-4 h-4 text-indigo-200 animate-pulse" />
-                      <span>Marshrutni hisoblash</span>
+                      <Navigation className={`w-3.5 h-3.5 ${routeStats ? 'text-slate-500' : 'text-indigo-250 animate-pulse'}`} />
+                      <span>{routeStats ? "Marshrutni qayta hisoblash" : "Optimallashtirilgan marshrutni hisoblash"}</span>
                     </span>
                  )}
               </button>
@@ -3013,61 +3049,67 @@ export default function MapComponent() {
             {/* External Navigation Links (Visible when >= 2 locations exist) */}
             {selectedLocations.length >= 2 && (
                <div className="pt-2.5 border-t border-slate-100 flex flex-col space-y-2">
-                 <div className="flex justify-between items-center px-1">
+                 <div className="flex justify-between items-center px-0.5">
                    <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-widest leading-none">
-                     {routeStats ? "Optimallashtirilgan navigatsiya:" : "Navigatorda boshlash:"}
+                     Navigatsiya boshlash:
                    </span>
                    {!routeStats && (
-                     <span className="text-[8px] font-extrabold bg-yellow-105 text-yellow-800 px-1 hover:bg-yellow-150 rounded leading-normal" title="Hozirgi ketma-ketlikda. Optimallashtirilgan marshrut olish uchun avval 'Marshrutni hisoblash' tugmasini bosing">
+                     <span className="text-[8px] font-extrabold bg-yellow-105 text-yellow-850 px-1.5 py-0.5 rounded leading-normal" title="Optimallashtirilgan marshrut olish uchun avval 'Marshrutni hisoblash' tugmasini bosing">
                        ketma-ketlikda
                      </span>
                    )}
                  </div>
-                 
-                 <div className="flex space-x-2">
+
+                 {/* Symmetrical 3-column row */}
+                 <div className="grid grid-cols-3 gap-1 px-0.5">
                    <a 
                      href={getGoogleMapsUrl(selectedLocations)}
                      target="_blank"
                      rel="noopener noreferrer"
-                     className="flex-1 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white hover:bg-slate-800 font-bold text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-sm hover:shadow-md cursor-pointer no-underline"
+                     className="py-2 px-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] flex flex-col items-center justify-center space-y-1 transition-all active:scale-95 text-center no-underline cursor-pointer"
+                     title="Google Maps"
                    >
-                     <ExternalLink className="w-3.5 h-3.5 text-green-400" />
-                     <span>Google Maps</span>
+                     <img src="https://upload.wikimedia.org/wikipedia/commons/a/a9/Google_Maps_icon_%282020%29.svg" className="w-4 h-4 shrink-0" alt="" />
+                     <span className="text-[9px] leading-tight font-black">Google Maps</span>
                    </a>
+
                    <a 
                      href={getYandexMapsUrl(selectedLocations)}
                      target="_blank"
                      rel="noopener noreferrer"
-                     className="flex-1 py-2 rounded-xl bg-orange-50 border border-orange-200 text-orange-700 hover:bg-orange-100 font-bold text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-sm hover:shadow-md cursor-pointer no-underline"
+                     className="py-2 px-1 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-[10px] flex flex-col items-center justify-center space-y-1 transition-all active:scale-95 text-center no-underline cursor-pointer"
+                     title="Yandex Navigatsiya"
                    >
-                     <ExternalLink className="w-3.5 h-3.5 text-orange-500" />
-                     <span>Yandex Nav</span>
+                     <svg className="w-4 h-4 fill-current shrink-0 text-white" viewBox="0 0 24 24">
+                       <path d="M12.5 2C6.701 2 2 6.701 2 12.5S6.701 23 12.5 23 23 18.299 23 12.5 18.299 2 12.5 2zm1.751 14.125h-1.59l-.49 1.487h-1.3l1.884-5.263h1.492l1.884 5.263h-1.39l-.49-1.487zm-1.325-1.026h1.06l-.53-1.614-.53 1.614z"/>
+                     </svg>
+                     <span className="text-[9px] leading-tight font-black">Yandex Nav</span>
                    </a>
-                 </div>
 
-                 {/* Pure In-App Navigator Trigger */}
-                 <button
-                   onClick={() => {
-                     setIsNavigationActive(true);
-                     setNavigationStepIndex(1);
-                     setIsAutoCenter(true);
-                     setIsMobilePanelOpen(false);
-                     if (selectedLocations.length > 0) {
-                       const startLat = selectedLocations[0].lat;
-                       const startLng = selectedLocations[0].lng;
-                       setUserLocation([startLat, startLng]);
-                       if (mapRef.current) {
-                         mapRef.current.setView([startLat, startLng], 17);
+                   <button
+                     type="button"
+                     onClick={() => {
+                       setIsNavigationActive(true);
+                       setNavigationStepIndex(1);
+                       setIsAutoCenter(true);
+                       setIsMobilePanelOpen(false);
+                       if (selectedLocations.length > 0) {
+                         const startLat = selectedLocations[0].lat;
+                         const startLng = selectedLocations[0].lng;
+                         setUserLocation([startLat, startLng]);
+                         if (mapRef.current) {
+                           mapRef.current.setView([startLat, startLng], 17);
+                         }
                        }
-                     }
-                     showToast("O'zimizning navigator faollashdi! Qurilmangiz GPS signali orqali yo'lingiz kuzatib boriladi.", "success");
-                   }}
-                   className="w-full py-3.5 mt-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-95 text-white rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-lg shadow-indigo-600/20 shrink-0 cursor-pointer"
-                   title="Ushbu saytning o'zida GPS navigatsiya rejimini ishga tushirish"
-                 >
-                   <Compass className="w-4 h-4 animate-spin text-indigo-100" style={{ animationDuration: '6s' }} />
-                   <span>Yo'lga chiqish (Navigator)</span>
-                 </button>
+                       showToast("O'zimizning navigator faollashdi! Qurilmangiz GPS signali orqali yo'lingiz kuzatib boriladi.", "success");
+                     }}
+                     className="py-2 px-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] flex flex-col items-center justify-center space-y-1 transition-all active:scale-95 text-center cursor-pointer"
+                     title="GPS Navigator"
+                   >
+                     <Compass className="w-4 h-4 text-indigo-100 shrink-0" />
+                     <span className="text-[9px] leading-tight font-black">Yo'lga chiqish</span>
+                   </button>
+                 </div>
                </div>
             )}
           </div>
@@ -3075,126 +3117,151 @@ export default function MapComponent() {
 
         {/* Economist / Analytics Panel */}
         {routeStats && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[55vh] md:max-h-[50vh] overscroll-contain block">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-2">
-                <Route className="w-5 h-5 text-indigo-600" />
-                <div>
-                  <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Marshrut Ma'lumotlari</h3>
-                  <p className="text-[9px] text-slate-500 font-medium leading-tight">Navigatsiya QR-kodi yuklandi</p>
+          isRouteStatsExpanded ? (
+            <div className="pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 mb-4 md:mb-0 mx-2 md:mx-0 rounded-3xl shadow-2xl border border-slate-100 shrink-0 w-auto md:w-[384px] animate-in slide-in-from-right-4 duration-300 print:hidden overflow-y-auto max-h-[55vh] md:max-h-[50vh] overscroll-contain block animate-fade-in">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                  <Route className="w-5 h-5 text-indigo-600 animate-pulse" />
+                  <div>
+                    <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Marshrut Ma'lumotlari</h3>
+                    <p className="text-[9px] text-slate-500 font-medium leading-tight">Navigatsiya QR-kodi yuklandi</p>
+                  </div>
                 </div>
+                {/* Collapse button */}
+                <button
+                  type="button"
+                  onClick={() => setIsRouteStatsExpanded(false)}
+                  className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-all cursor-pointer flex items-center justify-center border border-slate-100 bg-slate-50"
+                  title="Yig'ish"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
-                <div className="flex items-center space-x-1.5 mb-1 text-blue-600">
-                  <MapIcon className="w-3.5 h-3.5" />
-                  <span className="text-[9px] font-bold uppercase tracking-wider">Masofa</span>
-                </div>
-                <div className="text-xl font-black text-slate-900 leading-none mt-1">
-                  {(routeStats.distance / 1000).toFixed(1)} <span className="text-sm font-semibold text-slate-500">km</span>
-                </div>
-              </div>
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
-                <div className="flex items-center space-x-1.5 mb-1 text-orange-600">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span className="text-[9px] font-bold uppercase tracking-wider">Vaqt</span>
-                </div>
-                <div className="text-xl font-black text-slate-900 leading-none mt-1">
-                  {Math.round(routeStats.duration / 60)} <span className="text-sm font-semibold text-slate-500">min</span>
-                </div>
-              </div>
-            </div>
-
-            {/* QR Code Segment for Navigator */}
-            <div className="mt-4 border-t border-slate-100 pt-4 flex flex-col items-center">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 self-start">Smartfonda ochish (QR kod):</h4>
               
-              {/* Multi-vehicle branch: Route selection dropdown if routes > 1 */}
-              {routeStats.routes && routeStats.routes.length > 1 && (
-                <div className="w-full mb-3">
-                  <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Moshina tanlash:</label>
-                  <select 
-                    value={selectedRouteQrIdx} 
-                    onChange={(e) => setSelectedRouteQrIdx(Number(e.target.value))}
-                    className="w-full text-xs font-bold bg-slate-50 border border-slate-150 p-2 rounded-xl text-slate-700 outline-none cursor-pointer hover:border-slate-300"
-                  >
-                    {routeStats.routes.map((_, rIdx) => (
-                      <option key={rIdx} value={rIdx}>Moshina #{rIdx + 1} yo'nalishi</option>
-                    ))}
-                  </select>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <div className="flex items-center space-x-1.5 mb-1 text-blue-600">
+                    <MapIcon className="w-3.5 h-3.5" />
+                    <span className="text-[9px] font-bold uppercase tracking-wider">Masofa</span>
+                  </div>
+                  <div className="text-xl font-black text-slate-900 leading-none mt-1">
+                    {(routeStats.distance / 1000).toFixed(1)} <span className="text-sm font-semibold text-slate-500">km</span>
+                  </div>
                 </div>
-              )}
-
-              {/* Navigator Engine Tabs */}
-              <div className="flex w-full bg-slate-100 p-1 rounded-xl mb-4">
-                <button
-                  type="button"
-                  onClick={() => setQrMapSelected('google')}
-                  className={`flex-1 py-1.5 font-bold text-xs rounded-lg transition-all ${
-                    qrMapSelected === 'google' 
-                      ? 'bg-blue-600 text-white shadow' 
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Google Maps
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setQrMapSelected('yandex')}
-                  className={`flex-1 py-1.5 font-bold text-xs rounded-lg transition-all ${
-                    qrMapSelected === 'yandex' 
-                      ? 'bg-orange-500 text-white shadow' 
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Yandex Maps
-                </button>
+                <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <div className="flex items-center space-x-1.5 mb-1 text-orange-600">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span className="text-[9px] font-bold uppercase tracking-wider">Vaqt</span>
+                  </div>
+                  <div className="text-xl font-black text-slate-900 leading-none mt-1">
+                    {Math.round(routeStats.duration / 60)} <span className="text-sm font-semibold text-slate-500">min</span>
+                  </div>
+                </div>
               </div>
 
-              {/* QR Code Container */}
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner flex flex-col items-center justify-center w-full min-h-[220px]">
-                {(() => {
-                  const activeRouteObj = routeStats.routes && routeStats.routes[selectedRouteQrIdx] 
-                    ? routeStats.routes[selectedRouteQrIdx] 
-                    : { locations: selectedLocations };
-                  const targetNavigationUrl = qrMapSelected === 'google' 
-                    ? getGoogleMapsUrl(activeRouteObj.locations)
-                    : getYandexMapsUrl(activeRouteObj.locations);
-                  const qrCodeImageSource = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(targetNavigationUrl)}`;
+              {/* QR Code Segment for Navigator */}
+              <div className="mt-4 border-t border-slate-100 pt-4 flex flex-col items-center">
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 self-start">Smartfonda ochish (QR kod):</h4>
+                
+                {/* Multi-vehicle branch: Route selection dropdown if routes > 1 */}
+                {routeStats.routes && routeStats.routes.length > 1 && (
+                  <div className="w-full mb-3">
+                    <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Moshina tanlash:</label>
+                    <select 
+                      value={selectedRouteQrIdx} 
+                      onChange={(e) => setSelectedRouteQrIdx(Number(e.target.value))}
+                      className="w-full text-xs font-bold bg-slate-50 border border-slate-150 p-2 rounded-xl text-slate-700 outline-none cursor-pointer hover:border-slate-300"
+                    >
+                      {routeStats.routes.map((_, rIdx) => (
+                        <option key={rIdx} value={rIdx}>Moshina #{rIdx + 1} yo'nalishi</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
-                  return (
-                    <>
-                      <div className="bg-white p-2.5 rounded-2xl shadow-sm border border-slate-100 mb-3 hover:scale-[1.02] transition-transform duration-200">
-                        <img 
-                          src={qrCodeImageSource} 
-                          alt="Marshrut QR kodi" 
-                          referrerPolicy="no-referrer"
-                          className="w-40 h-40 object-contain rounded-lg"
-                        />
-                      </div>
-                      <p className="text-[10px] text-center text-slate-500 font-semibold px-2">
-                        Telefoningiz kamerasini QR-kodga qarating va navigatsiyani bir zumda oching.
-                      </p>
-                      <div className="mt-3 flex space-x-2 w-full">
-                        <a 
-                          href={targetNavigationUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[10px] rounded-xl flex items-center justify-center space-x-1.5 border border-slate-200 transition-colors cursor-pointer no-underline text-center shadow-sm"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                          <span>Sarlavhani ochish</span>
-                        </a>
-                      </div>
-                    </>
-                  );
-                })()}
+                {/* Navigator Engine Tabs */}
+                <div className="flex w-full bg-slate-100 p-1 rounded-xl mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setQrMapSelected('google')}
+                    className={`flex-1 py-1.5 font-bold text-xs rounded-lg transition-all ${
+                      qrMapSelected === 'google' 
+                        ? 'bg-blue-600 text-white shadow' 
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Google Maps
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQrMapSelected('yandex')}
+                    className={`flex-1 py-1.5 font-bold text-xs rounded-lg transition-all ${
+                      qrMapSelected === 'yandex' 
+                        ? 'bg-orange-500 text-white shadow' 
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Yandex Maps
+                  </button>
+                </div>
+
+                {/* QR Code Container */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner flex flex-col items-center justify-center w-full min-h-[220px]">
+                  {(() => {
+                    const activeRouteObj = routeStats.routes && routeStats.routes[selectedRouteQrIdx] 
+                      ? routeStats.routes[selectedRouteQrIdx] 
+                      : { locations: selectedLocations };
+                    const targetNavigationUrl = qrMapSelected === 'google' 
+                      ? getGoogleMapsUrl(activeRouteObj.locations)
+                      : getYandexMapsUrl(activeRouteObj.locations);
+                    const qrCodeImageSource = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(targetNavigationUrl)}`;
+
+                    return (
+                      <>
+                        <div className="bg-white p-2.5 rounded-2xl shadow-sm border border-slate-100 mb-3 hover:scale-[1.02] transition-transform duration-200">
+                          <img 
+                            src={qrCodeImageSource} 
+                            alt="Marshrut QR kodi" 
+                            referrerPolicy="no-referrer"
+                            className="w-40 h-40 object-contain rounded-lg"
+                          />
+                        </div>
+                        <p className="text-[10px] text-center text-slate-500 font-semibold px-2">
+                          Telefoningiz kamerasini QR-kodga qarating va navigatsiyani bir zumda oching.
+                        </p>
+                        <div className="mt-3 flex space-x-2 w-full">
+                          <a 
+                            href={targetNavigationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[10px] rounded-xl flex items-center justify-center space-x-1.5 border border-slate-200 transition-colors cursor-pointer no-underline text-center shadow-sm"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span>Sarlavhani ochish</span>
+                          </a>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
-
             </div>
-          </div>
+          ) : (
+            /* Collapsed view (small elegant floating pill-button on map bottom-right) */
+            <button
+              type="button"
+              onClick={() => setIsRouteStatsExpanded(true)}
+              className="pointer-events-auto print:hidden bg-slate-900 text-white rounded-full px-5 py-3 shadow-2xl border border-slate-800 font-bold text-xs flex items-center space-x-2 hover:bg-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer mr-2 md:mr-0 mb-4 md:mb-0"
+              title="Marshrut ma'lumotlarini yuklash"
+            >
+              <div className="relative flex h-2 w-2 mr-0.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </div>
+              <Route className="w-4 h-4 text-emerald-400" />
+              <span>Ma'lumotlar ({Math.round(routeStats.duration / 60)} min / {(routeStats.distance / 1000).toFixed(1)} km)</span>
+            </button>
+          )
         )}
 
         {/* Legend Panel (Condensed version) */}

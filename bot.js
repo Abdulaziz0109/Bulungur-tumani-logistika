@@ -250,33 +250,73 @@ if (hasValidToken && firebaseConfig) {
         return;
     }
 
-    // AI smart parsing with Gemini
+    // AI smart parsing with Gemini - EVERY user question gets answered with context!
     try {
+        const querySnapshot = await getDocs(collection(db, 'locations'));
+        const allLocations = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.name && data.lat && data.lng) {
+            allLocations.push({
+              id: doc.id,
+              name: data.name,
+              type: data.type || "muassasa",
+              lat: data.lat,
+              lng: data.lng,
+              mahalla: data.mahalla || "",
+              landmark: data.landmark || "",
+              capacity: data.capacity || ""
+            });
+          }
+        });
+
+        // Format the database context for Gemini
+        const dbContextText = allLocations.map((loc, idx) => {
+          let line = `${idx + 1}. ID: "${loc.id}", Nomi: "${loc.name}", Turi: "${loc.type}", Lat: ${loc.lat}, Lng: ${loc.lng}`;
+          if (loc.mahalla) line += `, Mahalla: "${loc.mahalla}"`;
+          if (loc.landmark) line += `, Mo'ljal: "${loc.landmark}"`;
+          if (loc.capacity) line += `, Sig'imi: ${loc.capacity} nafar`;
+          return line;
+        }).join('\n');
+
+        const systemPrompt = `Siz Samarqand viloyati Bulung'ur tumanining Maktabgacha va maktab ta'limi bo'limi (MMTB) logistika va axborot bo'limining maxsus AI yordamchisiz. Foydalanuvchilar sizga o'zbek tilida turli savollar berishadi.
+Sizga tuman muassasalari va obektlarining ma'lumotlar bazasi (Hozirgi vaqtda kiritilgan barcha maktablar, bog'chalar va boshqa idoralar) taqdim etiladi.
+
+MUASSASALAR RO'YXATI (DATABASE):
+${dbContextText || "Hozircha bazada hech qanday muassasa mavjud emas."}
+
+Vazifanglaringiz:
+1. Foydalanuvchining o'zbek tilidagi har qanday savoliga chiroyli, madaniyatli, to'liq va tushunarli javob yozing (replyMessage). Hech qachon markdown yulduzchalari kabi maxsus qalinlashtiruvchi belgilarni ishlatmang (javob toza matn bo'lsin).
+2. Agar foydalanuvchi muayyan muassasani qidirsa, unga oid bor ma'lumotni (nomi, turi, mahallasi, mo'ljali, sig'imi, koordinatalari) tushunarli tilda unga bayon qiling.
+3. Agar foydalanuvchi ikki yoki undan ko'p muassasalar orasidagi masofani yoki ular o'rtasidagi yo'lni so'rasa (Masalan: "Bulungur mmtbdan 4-maktabgacha necha km?", "12-bog'chadan mmtbgacha masofani ayt"):
+   - Base'dan foydalanib o'sha ikki (yoki ko'proq) muassasani toping.
+   - Matnda ularning aniq koordinatalari borligini tasdiqlab, ular orasidagi to'g'ri chiziqli (Haversine) masofa taxminan necha km bo'lishini siz ham hisoblab bering (Er radiusi R = 6371 km). Foydalanuvchi buni hisoblashda baza koordinatalari ishlatilganini bilsin.
+   - "matchedLocationIds" massiviga ushbu topilgan muassasalarning ID-larini tartib bilan kiriting (Masalan, birinchi muassasa ID-si va ikkinchi muassasa ID-si).
+4. Agar bitta muassasani o'zini so'ragan yoki aniqlagan bo'lsa, "matchedLocationIds" ga o'sha muassasa ID-sini kiriting. Shunda tizim foydalanuvchiga xaritani va navigatsiyani avtomatik yuboradi.
+5. Suhbat niyatiga qarab "intent" qiymatini belgilang:
+   - 'distance' (ikki muassasa orasidagi masofani so'raganda)
+   - 'info' (bitta muassasani qidirganda yoki u haqda ma'lumot so'raganda)
+   - 'list' (tuman maktablari yoki bog'chalari ro'yxatni so'raganda)
+   - 'general' (salomlashish, bot imkoniyati, u-bu mavzudagi umumiy gaplar uchun)`;
+
         const response = await ai.models.generateContent({
           model: "gemini-3.5-flash",
           contents: userText,
           config: {
-            systemInstruction: "Siz Bulung'ur MMTB logistika botisiz. Foydalanuvchi xabaridan qidirilayotgan barcha ob'ektlarni (maktab va bog'chalarni) aniqlang va ularni ro'yxat qilib ajrating.\n\nMisollar:\n- 'Yangiobod maktabi' -> [{'query': 'Yangiobod', 'type': 'maktab'}]\n- '9 maktab' -> [{'query': '9', 'type': 'maktab'}]\n- '4 va 12-bogchalar' -> [{'query': '4', 'type': 'dmtt'}, {'query': '12', 'type': 'dmtt'}]\n- 'Sohibkor mahallasidagi bog\'cha' -> [{'query': 'Sohibkor', 'type': 'dmtt'}]\n- '15-maktab va 3-bog\'cha' -> [{'query': '15', 'type': 'maktab'}, {'query': '3', 'type': 'dmtt'}]\n\nObyekt turi 'type' maydoni uchun: 'maktab' (maktablar uchun), 'dmtt' (bog'chalar/DMTT/MTTlar uchun), 'barchasi' yoki 'boshqa' (aniq bo'lmasa).\n\nAgar foydalanuvchi ob'ekt qidirmayotgan bo'lsa (faqat salomlashsa yoki umumiy gap gapirsa), 'replyMessage' maydoniga uzbek tilida muloyim javob yozing. Hech qanday markdown maxsus belgilaridan (* kabi) foydalanmang.",
+            systemInstruction: systemPrompt,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                searchTargets: {
+                replyMessage: { type: Type.STRING, description: "Uzbek tilidagi odamga o'xshash muloyim, madaniyatli va mazmunli bevosita javob xabari." },
+                matchedLocationIds: {
                   type: Type.ARRAY,
-                  items: { 
-                     type: Type.OBJECT,
-                     properties: {
-                         query: { type: Type.STRING, description: "Qidirilayotgan obyekt raqami yoki asosiy nomi (masalan: '15')" },
-                         type: { type: Type.STRING, description: "Obyekt turi: 'maktab', 'dmtt' yoki 'barchasi'" }
-                     }
-                  },
-                  description: "Qidirilayotgan obyektlar."
+                  items: { type: Type.STRING },
+                  description: "Savolga mos keladigan muassasalarning ID-lari massivi (database dagi ID maydoni qiymatlari). Boshlang'ich nuqtadan yakuniy nuqtagacha tartiblangan bo'lishi kerak. Topilmasa, bo'sh massiv [] qoldiring."
                 },
-                replyMessage: {
-                  type: Type.STRING,
-                  description: "Agar u qandaydir savol yoki salomlashish bo'lsayu ob'ekt qidirmayotgan bo'lsa, javob xati."
-                }
-              }
+                intent: { type: Type.STRING, description: "Niyat turi: 'distance', 'info', 'list', yoki 'general'" }
+              },
+              required: ["replyMessage", "matchedLocationIds", "intent"]
             }
           }
         });
@@ -284,192 +324,97 @@ if (hasValidToken && firebaseConfig) {
         const responseText = response.text || "{}";
         const result = JSON.parse(responseText);
 
-        if (result.searchTargets && result.searchTargets.length > 0) {
-            const tempWait = await ctx.reply("⏳ Qidiruv so'rovi tahlil qilinmoqda, ma'lumotlar bazasidan mosliklar qidirilmoqda...");
-            
-            const querySnapshot = await getDocs(collection(db, 'locations'));
-            const allLocations = [];
-            querySnapshot.forEach((doc) => {
-              const data = doc.data();
-              if (data.name && data.lat && data.lng) allLocations.push({ id: doc.id, ...data });
-            });
-            
-            const matchedLocations = [];
-            const matchedIds = new Set();
+        let finalReplyText = result.replyMessage || "Kechirasiz, so'rovingiz bo'yicha to'g'ri javob tuza olmadim.";
+        const matchedIds = result.matchedLocationIds || [];
 
-            const isLocMatch = (loc, qStr, tStr) => {
-                const nameLower = (loc.name || "").toLowerCase();
-                const mahallaLower = (loc.mahalla || "").toLowerCase();
-                const landmarkLower = (loc.landmark || "").toLowerCase();
-                const qLower = qStr.toLowerCase().trim();
-
-                if (tStr === 'maktab' && loc.type !== 'maktab') return false;
-                if ((tStr === 'dmtt' || tStr.includes('bog')) && loc.type !== 'dmtt') return false;
-
-                const qNums = qLower.match(/\d+/g);
-                if (qNums && qNums.length > 0) {
-                    const locNums = nameLower.match(/\d+/g);
-                    if (locNums && locNums.length > 0) {
-                        return qNums.some(qNum => locNums.includes(qNum));
-                    }
-                }
-
-                if (nameLower.includes(qLower) || mahallaLower.includes(qLower) || landmarkLower.includes(qLower)) {
-                    return true;
-                }
-
-                if (qLower.length > 4) {
-                    const stemmed = qLower.replace(/(da|dagi|ning|si|i|dan|ga|ligi|lar|lari)$/, '').trim();
-                    if (stemmed.length > 2) {
-                        return (nameLower.includes(stemmed) || mahallaLower.includes(stemmed) || landmarkLower.includes(stemmed));
-                    }
-                }
-
-                return false;
-            };
-
-            for (const target of result.searchTargets) {
-                const queryStr = (target.query || target).toString().toLowerCase().trim();
-                const typeStr = (target.type || "").toLowerCase().trim();
-                
-                const found = allLocations.filter(loc => isLocMatch(loc, queryStr, typeStr));
-                for (const loc of found) {
-                    if (!matchedIds.has(loc.id)) {
-                        matchedLocations.push(loc);
-                        matchedIds.add(loc.id);
-                    }
-                }
-            }
-
-            await ctx.telegram.deleteMessage(ctx.chat.id, tempWait.message_id).catch(()=>{});
-
-            if (matchedLocations.length === 0) {
-                await ctx.reply(`😔 Afsuski, qidirilgan so'rov bo'yicha ma'lumotlar bazasidan moslik topilmadi. Iltimos muassasa raqamini tekshirib qayta yozib ko'ring.`);
-                return;
-            }
-
-            if (matchedLocations.length === 1) {
-                const loc = matchedLocations[0];
-                let descriptionText = `🏫 *${loc.name}* topildi.`;
-                
-                try {
-                    const prompt = `Foydalanuvchi "Qayerda?" mazmunida savol berdi.\n` +
-                                   `So'rov: "${userText}"\n\n` +
-                                   `Bazadan topilgan ma'lumot:\n` +
-                                   `Nomi: ${loc.name}\n` +
-                                   `Mo'ljal: ${loc.landmark || "kiritilmagan"}\n` +
-                                   `Turi: ${loc.type === 'dmtt' ? "Maktabgacha ta'lim tashkiloti" : (loc.type === 'maktab' ? "Maktab" : loc.type)}\n` +
-                                   `Sig'imi: ${loc.capacity ? loc.capacity + " o'rin" : "kiritilmagan"}\n\n` +
-                                   `Vazifa: Foydalanuvchiga ushbu joy qayerda ekanligini odamga o'xshab o'ta muloyim, qisqa (2-3 ta gap) va chiroyli qilib tushuntirib bering. Mo'ljalni alohida urg'ulab o'ting (Masalan: "Ushbu maktab falonchi joy mo'ljalida joylashgan bo'lib..."). Faqat toza matn qaytaring, markdown yulduzchalarisiz.`;
-                    const descRes = await ai.models.generateContent({
-                        model: "gemini-3.5-flash",
-                        contents: prompt
-                    });
-                    if (descRes.text) {
-                        descriptionText = descRes.text;
-                    }
-                } catch (e) {
-                    console.error("AI desc generation error:", e);
-                }
-
-                await ctx.reply(descriptionText, {
-                  reply_markup: {
-                     inline_keyboard: [[
-                        { text: "🗺 Yandex'da ochish", url: `https://yandex.ru/maps/?rtext=~${loc.lat},${loc.lng}` },
-                        { text: "📍 Google Maps'da", url: `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}` }
-                     ]]
-                  }
-                });
-                await ctx.replyWithLocation(loc.lat, loc.lng);
-            } else if (matchedLocations.length > 8) {
-                // Safeguard against too many waypoints for OSRM API (Max 8 stops inline selection list)
-                let listMessage = `🤖 *AI qidiruv:* So'rovingiz bo'yicha *${matchedLocations.length} ta* muassasa topildi:\n\n`;
-                const buttons = [];
-                
-                matchedLocations.slice(0, 10).forEach((loc, idx) => {
-                   listMessage += `${idx + 1}. *${loc.name}*\n📍 Mo'ljal: ${loc.landmark || "kiritilmagan"}\n\n`;
-                   buttons.push([{
-                      text: `📍 ${loc.name} (Joylashuvi)`, 
-                      callback_data: `show_loc_${loc.lat}_${loc.lng}`
-                   }]);
-                });
-                
-                if (matchedLocations.length > 10) {
-                   listMessage += `⚠️ Natijalar ko'pligi sababli dastlabki 10 tasi ko'rsatildi. Kamroq ob'ektlarni jamlang.`;
-                }
-
-                await ctx.reply(listMessage, { 
-                  parse_mode: 'Markdown',
-                  reply_markup: {
-                    inline_keyboard: buttons
-                  }
-                });
-            } else {
-                // Multi-stop Optimization (Under 8 locations - safe for OSRM API)
-                try {
-                    const coordsList = matchedLocations.map(l => `${l.lng},${l.lat}`).join(';');
-                    const osrmRes = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsList}?roundtrip=false&source=first&overview=false`);
-                    const osrmData = await osrmRes.json();
-                    
-                    let orderedLocations = matchedLocations;
-                    if (osrmData.code === 'Ok' && osrmData.waypoints) {
-                        orderedLocations = new Array(matchedLocations.length);
-                        osrmData.waypoints.forEach((wp) => {
-                            orderedLocations[wp.waypoint_index] = matchedLocations[wp.original_index];
-                        });
-                    }
-
-                    let messageTxt = "🗺 *Optimallashgan borish marshruti (Eng qisqa yo'l):*\n\n";
-                    orderedLocations.forEach((loc, index) => {
-                        messageTxt += `${index === 0 ? '🏁 Boshlang\'ich nuqta' : `${index}-manzil`}: *${loc.name}*\n📍 Mo'ljal: _${loc.landmark || "kiritilmagan"}_\n\n`;
-                    });
-
-                    const yandexCoords = orderedLocations.map(loc => `~${loc.lat},${loc.lng}`).join('');
-                    const yandexUrl = `https://yandex.ru/maps/?rtext=${yandexCoords}`;
-
-                    const googleOrigin = `${orderedLocations[0].lat},${orderedLocations[0].lng}`;
-                    const googleDest = `${orderedLocations[orderedLocations.length - 1].lat},${orderedLocations[orderedLocations.length - 1].lng}`;
-                    const googleWaypoints = orderedLocations.slice(1, -1).map(w => `${w.lat},${w.lng}`).join('%7C');
-                    const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${googleOrigin}&destination=${googleDest}${googleWaypoints ? `&waypoints=${googleWaypoints}` : ''}&travelmode=driving`;
-
-                    await ctx.reply(messageTxt, {
-                      parse_mode: 'Markdown',
-                      reply_markup: {
-                         inline_keyboard: [
-                            [
-                              { text: "🗺 Yandex Navigatsiya", url: yandexUrl },
-                              { text: "📍 Google Maps", url: googleUrl }
-                            ]
-                         ]
-                      }
-                    });
-                } catch (routeErr) {
-                    console.error("OSRM optimization error:", routeErr);
-                    // Fast fallback
-                    let messageTxt = "📍 *Topilgan manzillar ro'yxati (Ketma-ketlik):*\n\n";
-                    matchedLocations.forEach((loc, index) => {
-                        messageTxt += `${index + 1}. *${loc.name}*\n📍 Mo'ljal: _${loc.landmark || "kiritilmagan"}_\n\n`;
-                    });
-                    
-                    const buttons = matchedLocations.map(loc => [
-                       { text: `🗺 ${loc.name}`, url: `https://yandex.ru/maps/?rtext=~${loc.lat},${loc.lng}` }
-                    ]);
-
-                    await ctx.reply(messageTxt, {
-                      parse_mode: 'Markdown',
-                      reply_markup: { inline_keyboard: buttons }
-                    });
-                }
-            }
-        } else if (result.replyMessage) {
-            await ctx.reply(result.replyMessage);
-        } else {
-            await ctx.reply("🤔 Kechirasiz, so'rovingiz bo'yicha hech qanday obyektni aniqlay olmadim. Iltimos, aniqroq yozing.");
+        // Filter valid matched locations from our allLocations using matchedIds
+        const matchedLocations = [];
+        for (const id of matchedIds) {
+          const loc = allLocations.find(l => l.id === id);
+          if (loc) matchedLocations.push(loc);
         }
 
+        if (matchedLocations.length === 1) {
+          const loc = matchedLocations[0];
+          await ctx.reply(finalReplyText, {
+            reply_markup: {
+               inline_keyboard: [[
+                  { text: "🗺 Yandex Xarita", url: `https://yandex.ru/maps/?rtext=~${loc.lat},${loc.lng}` },
+                  { text: "📍 Google Maps", url: `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}` }
+               ]]
+            }
+          });
+          await ctx.replyWithLocation(loc.lat, loc.lng);
+
+        } else if (matchedLocations.length >= 2) {
+          const computeHaversine = (lat1, lon1, lat2, lon2) => {
+            const R = 6371; // Earth's radius in km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+              Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; // Distance in km
+          };
+
+          if (matchedLocations.length === 2) {
+            const loc1 = matchedLocations[0];
+            const loc2 = matchedLocations[1];
+            const dKm = computeHaversine(loc1.lat, loc1.lng, loc2.lat, loc2.lng);
+            
+            finalReplyText += `\n\n📏 Koordinatali aniq masofa:\n• ${loc1.name} ➡️ ${loc2.name} oralig'i to'g'ri chiziq bo'ylab taxminan: ${dKm.toFixed(2)} km.`;
+          } else {
+            let totalD = 0;
+            let chainText = `\n\n📏 Zanjirli masofa hisoboti:`;
+            for (let i = 0; i < matchedLocations.length - 1; i++) {
+              const l1 = matchedLocations[i];
+              const l2 = matchedLocations[i+1];
+              const dist = computeHaversine(l1.lat, l1.lng, l2.lat, l2.lng);
+              totalD += dist;
+              chainText += `\n• ${i+1}. ${l1.name} ➡️ ${l2.name}: ${dist.toFixed(2)} km`;
+            }
+            chainText += `\n\n🏁 Jami umumiy chiziqli masofa: ${totalD.toFixed(2)} km`;
+            finalReplyText += chainText;
+          }
+
+          const yandexCoords = matchedLocations.map(loc => `~${loc.lat},${loc.lng}`).join('');
+          const yandexUrl = `https://yandex.ru/maps/?rtext=${yandexCoords}`;
+
+          const googleOrigin = `${matchedLocations[0].lat},${matchedLocations[0].lng}`;
+          const googleDest = `${matchedLocations[matchedLocations.length - 1].lat},${matchedLocations[matchedLocations.length - 1].lng}`;
+          let googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${googleOrigin}&destination=${googleDest}`;
+          if (matchedLocations.length > 2) {
+            const googleWaypoints = matchedLocations.slice(1, -1).map(w => `${w.lat},${w.lng}`).join('%7C');
+            googleUrl += `&waypoints=${googleWaypoints}`;
+          }
+          googleUrl += `&travelmode=driving`;
+
+          await ctx.reply(finalReplyText, {
+            reply_markup: {
+               inline_keyboard: [[
+                  { text: "🗺 Yandex Xarita (Yo'nalish)", url: yandexUrl },
+                  { text: "📍 Google Maps (Yo'nalish)", url: googleUrl }
+               ]]
+            }
+          });
+
+          // Show locations
+          for (let i = 0; i < Math.min(matchedLocations.length, 3); i++) {
+             const loc = matchedLocations[i];
+             await ctx.reply(`Belgilangan nuqta #${i+1}: ${loc.name}`);
+             await ctx.replyWithLocation(loc.lat, loc.lng);
+          }
+
+        } else {
+          await ctx.reply(finalReplyText, {
+             reply_markup: getMainMenu()
+          });
+        }
     } catch (err) {
         console.error("Gemini AI error in text handler:", err);
-        await ctx.reply("❌ So'rovingizni tahlil qilishda xatolik yuz berdi. Iltimos, faqat muassasa raqamining o'zini yozib yuboring.");
+        await ctx.reply("Kechirasiz, so'rovingizni tahlil qilishda nosozlik yuz berdi. Iltimos, muassasa raqamini aniqroq kiritib ko'ring (masalan: 12-maktab).");
     }
   });
 
