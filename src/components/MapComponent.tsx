@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, Volume2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -104,14 +104,71 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 export default function MapComponent() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLocations, setSelectedLocations] = useState<Location[]>([]);
-  const [routeGeometry, setRouteGeometry] = useState<[number, number][] | null>(null);
-  const [multiRouteGeometries, setMultiRouteGeometries] = useState<{coords: [number, number][], color: string}[] | null>(null);
+  const [selectedLocations, setSelectedLocations] = useState<Location[]>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_last_selected_locations');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [routeGeometry, setRouteGeometry] = useState<[number, number][] | null>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_last_route_geometry');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [multiRouteGeometries, setMultiRouteGeometries] = useState<{coords: [number, number][], color: string}[] | null>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_last_multi_route_geometries');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [vehiclesCount, setVehiclesCount] = useState<number>(1);
   const [isRoundtrip, setIsRoundtrip] = useState<boolean>(false);
   const [sharedStartPoint, setSharedStartPoint] = useState<boolean>(false);
-  const [routeStats, setRouteStats] = useState<any>(null);
+  const [routeStats, setRouteStats] = useState<any>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_last_route_stats');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isCalculating, setIsCalculating] = useState(false);
+
+  const getGoogleMapsUrl = (locationsList: any[]) => {
+    if (!locationsList || locationsList.length < 2) return '';
+    const origin = `${locationsList[0].lat},${locationsList[0].lng}`;
+    let destination = '';
+    let waypoints: any[] = [];
+
+    if (isRoundtrip) {
+      destination = `${locationsList[0].lat},${locationsList[0].lng}`;
+      waypoints = locationsList.slice(1);
+    } else {
+      destination = `${locationsList[locationsList.length - 1].lat},${locationsList[locationsList.length - 1].lng}`;
+      waypoints = locationsList.slice(1, -1);
+    }
+
+    const waypointsStr = waypoints.map(w => `${w.lat},${w.lng}`).join('%7C');
+    return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=driving`;
+  };
+
+  const getYandexMapsUrl = (locationsList: any[]) => {
+    if (!locationsList || locationsList.length < 2) return '';
+    const pts = [...locationsList];
+    if (isRoundtrip) {
+      pts.push(locationsList[0]);
+    }
+    const rtext = pts.map(p => `${p.lat},${p.lng}`).join('~');
+    return `https://yandex.com/maps/?rtext=${rtext}&rtt=auto`;
+  };
+
   const [districtBoundary, setDistrictBoundary] = useState<any>(null);
 
   // Area Boundary Search States
@@ -173,6 +230,7 @@ export default function MapComponent() {
   const [searchResults, setSearchResults] = useState<Location[]>([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
+  const [isMapLocked, setIsMapLocked] = useState(false);
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [isPickingRoutePoint, setIsPickingRoutePoint] = useState(false);
 
@@ -183,6 +241,100 @@ export default function MapComponent() {
 
   const [optimizedRouteDistance, setOptimizedRouteDistance] = useState<number | null>(null);
   const [hideUnselected, setHideUnselected] = useState(false);
+
+  const [isNavigationActive, setIsNavigationActive] = useState<boolean>(false);
+  const [navigationStepIndex, setNavigationStepIndex] = useState<number>(1);
+  const [isAutoCenter, setIsAutoCenter] = useState<boolean>(true);
+
+  // Active Geolocation watcher for HUD Navigation mode
+  useEffect(() => {
+    if (!isNavigationActive) return;
+
+    if (!navigator.geolocation) {
+      showToast("GPS qurilmangizda qo'llab-quvvatlanmaydi.", "error");
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        setUserLocation([lat, lng]);
+
+        if (isAutoCenter && mapRef.current) {
+          mapRef.current.setView([lat, lng], 17); // nice, close street view zoom for HUD navigation
+        }
+      },
+      (error) => {
+        console.error("Navigation GPS watch error:", error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [isNavigationActive, isAutoCenter]);
+
+  // Voice trigger for HUD navigation
+  useEffect(() => {
+    if (isNavigationActive) {
+      speakCurrentRouteStep(navigationStepIndex);
+    }
+  }, [isNavigationActive, navigationStepIndex]);
+
+  // QR code states
+  const [qrMapSelected, setQrMapSelected] = useState<'google' | 'yandex'>('google');
+  const [selectedRouteQrIdx, setSelectedRouteQrIdx] = useState<number>(0);
+
+  // Sync route states with localStorage for offline caching
+  useEffect(() => {
+    try {
+      localStorage.setItem('mmtb_last_selected_locations', JSON.stringify(selectedLocations));
+    } catch (e) {
+      console.error("Local storage error:", e);
+    }
+  }, [selectedLocations]);
+
+  useEffect(() => {
+    try {
+      if (routeGeometry) {
+        localStorage.setItem('mmtb_last_route_geometry', JSON.stringify(routeGeometry));
+      } else {
+        localStorage.removeItem('mmtb_last_route_geometry');
+      }
+    } catch (e) {
+      console.error("Local storage error:", e);
+    }
+  }, [routeGeometry]);
+
+  useEffect(() => {
+    try {
+      if (multiRouteGeometries) {
+        localStorage.setItem('mmtb_last_multi_route_geometries', JSON.stringify(multiRouteGeometries));
+      } else {
+        localStorage.removeItem('mmtb_last_multi_route_geometries');
+      }
+    } catch (e) {
+      console.error("Local storage error:", e);
+    }
+  }, [multiRouteGeometries]);
+
+  useEffect(() => {
+    try {
+      if (routeStats) {
+        localStorage.setItem('mmtb_last_route_stats', JSON.stringify(routeStats));
+      } else {
+        localStorage.removeItem('mmtb_last_route_stats');
+      }
+    } catch (e) {
+      console.error("Local storage error:", e);
+    }
+  }, [routeStats]);
 
   const { role, currentUser } = useAuth();
   const navigate = useNavigate();
@@ -197,6 +349,37 @@ export default function MapComponent() {
       Math.sin(dLon/2) * Math.sin(dLon/2); 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
     return R * c; // Distance in km
+  };
+
+  const speakCurrentRouteStep = (stepIdx: number) => {
+    if (selectedLocations.length < 2) return;
+    
+    let target = null;
+    let text = "";
+    
+    if (isRoundtrip && stepIdx === selectedLocations.length) {
+      target = selectedLocations[0];
+      text = `Yakuniy manzilingiz: ${target.name}. Bu boshlang'ich nuqta. Yo'lga chiqing!`;
+    } else {
+      const idx = stepIdx >= selectedLocations.length ? selectedLocations.length - 1 : stepIdx;
+      target = selectedLocations[idx];
+      text = `Keyingi manzilingiz: ${target.name}. Marhamat, ushbu ob'ektga qarab yo'naling!`;
+    }
+
+    if (target) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'uz-UZ';
+        const voices = window.speechSynthesis.getVoices();
+        const ruVoice = voices.find(v => v.lang.toLowerCase().includes('ru'));
+        const uzVoice = voices.find(v => v.lang.toLowerCase().includes('uz'));
+        if (uzVoice) utterance.voice = uzVoice;
+        else if (ruVoice) utterance.voice = ruVoice;
+        utterance.rate = 0.95;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
   };
 
   const handleSearch = (q: string) => {
@@ -1080,6 +1263,35 @@ export default function MapComponent() {
     return clusters.filter(c => c.length > 0);
   };
 
+  const autoSaveCalculatedRoute = async (orderedLocs: Location[], stats: any) => {
+    try {
+      const currentUid = currentUser?.uid || 'guest';
+      const startName = orderedLocs[0]?.name || "Noma'lum ob'ekt";
+      const endName = orderedLocs[orderedLocs.length - 1]?.name || "Noma'lum ob'ekt";
+      
+      const now = new Date();
+      const dateString = now.toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const timeString = now.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
+      
+      const routeName = `${startName} → ${endName} (${dateString}, ${timeString})`;
+      
+      const routeData = {
+        name: routeName,
+        locations: orderedLocs,
+        routeStats: stats,
+        isRoundtrip: isRoundtrip,
+        createdBy: currentUid,
+        createdAt: now.toISOString()
+      };
+
+      await addDoc(collection(db, 'routes'), routeData);
+      showToast("Marshrut tarixingizga saqlandi!", "success");
+      fetchSavedRoutes();
+    } catch (error) {
+      console.error("Auto save route error:", error);
+    }
+  };
+
   const calculateOptimizedRoute = async () => {
     if (selectedLocations.length < 2) return;
     setIsCalculating(true);
@@ -1108,7 +1320,7 @@ export default function MapComponent() {
             orderedLocations = reordered;
           }
 
-          setRouteStats({
+          const stats = {
             distance: trip.distance,
             duration: trip.duration,
             routes: [{
@@ -1117,8 +1329,10 @@ export default function MapComponent() {
               locations: orderedLocations,
               color: '#3b82f6'
             }]
-          });
+          };
+          setRouteStats(stats);
           setOptimizedRouteDistance(trip.distance);
+          autoSaveCalculatedRoute(orderedLocations, stats);
         } else {
           showToast("Optimallashtirilgan yo'nalish topilmadi", "error");
         }
@@ -1177,9 +1391,11 @@ export default function MapComponent() {
            }
         }
         
+        const stats = { distance: totalDist, duration: totalDur, routes };
         setMultiRouteGeometries(multi);
-        setRouteStats({ distance: totalDist, duration: totalDur, routes });
+        setRouteStats(stats);
         setOptimizedRouteDistance(totalDist);
+        autoSaveCalculatedRoute(selectedLocations, stats);
       }
     } catch (error) {
        console.error("TSP Xatolik:", error);
@@ -1199,93 +1415,97 @@ export default function MapComponent() {
       </div>
 
       {/* Header Panel */}
-      <div className="print:hidden absolute top-4 left-4 md:top-6 md:left-6 z-[400] bg-white/95 backdrop-blur-md px-3 py-2 md:px-5 md:py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center space-x-2 md:space-x-4 max-w-[calc(100vw-32px)]">
-        <div className="flex items-center space-x-2 md:space-x-3">
-          <div className="w-8 h-8 md:w-10 md:h-10 bg-blue-600 rounded-xl flex items-center justify-center shrink-0">
-            <MapIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[120px] md:max-w-none">
-              MMTB Logistika
-            </h1>
-            <div className="flex items-center text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 shrink-0"></span>
-               <span className="truncate">{currentUser ? 'Iqtisodchi' : 'Mehmon'}</span>
+      {!isNavigationActive && (
+        <div className="print:hidden absolute top-3 left-3 right-3 md:top-6 md:left-6 md:right-auto z-[400] bg-white/95 backdrop-blur-md px-3 py-2 md:px-5 md:py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center justify-between md:justify-start space-x-2 md:space-x-4 max-w-none md:max-w-[calc(100vw-32px)]">
+          <div className="flex items-center space-x-2 md:space-x-3">
+            <div className="w-8 h-8 md:w-10 md:h-10 bg-blue-600 rounded-xl flex items-center justify-center shrink-0">
+              <MapIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[120px] md:max-w-none">
+                MMTB Logistika
+              </h1>
+              <div className="flex items-center text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 shrink-0"></span>
+                 <span className="truncate">{currentUser ? 'Iqtisodchi' : 'Mehmon'}</span>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="w-px h-6 md:h-8 bg-slate-200 mx-1 md:mx-2 shrink-0"></div>
-        <div className="flex items-center space-x-1 md:space-x-2 overflow-x-auto hide-scrollbar">
-          {!currentUser ? (
-            <button 
-              onClick={() => navigate('/login')}
-              className="px-2 py-1.5 md:px-4 md:py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] md:text-xs rounded-xl shadow-md transition-all font-sans whitespace-nowrap"
-            >
-              Tizimga kirish
-            </button>
-          ) : (
-            <>
-              {currentUser && (
-                <button 
-                  onClick={() => navigate('/admin')}
-                  className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
-                >
-                  <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
-                  <span className="hidden sm:inline">Iqtisodchi Paneli</span>
-                </button>
-              )}
+          <div className="w-px h-6 md:h-8 bg-slate-200 mx-1 md:mx-2 shrink-0"></div>
+          <div className="flex items-center space-x-1 md:space-x-2 overflow-x-auto hide-scrollbar">
+            {!currentUser ? (
               <button 
-                onClick={() => auth.signOut()}
-                className="px-2 py-1.5 md:px-3 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 shrink-0"
-                title="Tizimdan chiqish"
+                onClick={() => navigate('/login')}
+                className="px-2 py-1.5 md:px-4 md:py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] md:text-xs rounded-xl shadow-md transition-all font-sans whitespace-nowrap"
               >
-                 <LogOut className="w-4 h-4" />
+                Kirish
               </button>
-            </>
-          )}
+            ) : (
+              <>
+                {currentUser && (
+                  <button 
+                    onClick={() => navigate('/admin')}
+                    className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
+                  >
+                    <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
+                    <span className="hidden sm:inline">Iqtisodchi Paneli</span>
+                  </button>
+                )}
+                <button 
+                  onClick={() => auth.signOut()}
+                  className="px-2 py-1.5 md:px-3 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 shrink-0"
+                  title="Tizimdan chiqish"
+                >
+                   <LogOut className="w-4 h-4" />
+                </button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Search Bar */}
-      <div className="print:hidden absolute top-20 md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[90%] sm:max-w-md transition-all">
-        <div className={`relative bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 flex items-center px-4 py-3 transition-colors ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
-           <Search className="w-5 h-5 text-slate-400 mr-3" />
-           <input 
-             type="text" 
-             placeholder="Maktab yoki bog'cha qidiring..." 
-             className="w-full bg-transparent outline-none text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
-             value={searchQuery}
-             onChange={(e) => handleSearch(e.target.value)}
-             onFocus={() => setIsSearchFocused(true)}
-             onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-           />
-           {searchQuery && (
-              <button onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]);}} className="p-1 text-slate-400 hover:bg-slate-100 rounded-full"><X className="w-4 h-4"/></button>
-           )}
-        </div>
-        {isSearchFocused && searchResults.length > 0 && (
-          <div className="absolute top-full left-0 w-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2">
-            {searchResults.map(res => (
-              <button 
-                key={res.id} 
-                onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
-                className="w-full text-left px-5 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col"
-              >
-                <span className="font-bold text-slate-800 text-sm leading-tight">{res.name}</span>
-                <div className="flex items-center space-x-2 mt-1">
-                  <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
-                  {res.mahalla && (
-                    <>
-                      <span className="w-1 h-1 rounded-full bg-slate-200"></span>
-                      <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
-                    </>
-                  )}
-                </div>
-              </button>
-            ))}
+      {!isNavigationActive && (
+        <div className="print:hidden absolute top-[76px] md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[94%] sm:w-[90%] sm:max-w-md transition-all">
+          <div className={`relative bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 flex items-center px-4 py-3 transition-colors ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
+             <Search className="w-5 h-5 text-slate-400 mr-3" />
+             <input 
+               type="text" 
+               placeholder="Maktab yoki bog'cha qidiring..." 
+               className="w-full bg-transparent outline-none text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+               value={searchQuery}
+               onChange={(e) => handleSearch(e.target.value)}
+               onFocus={() => setIsSearchFocused(true)}
+               onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+             />
+             {searchQuery && (
+                <button onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]);}} className="p-1 text-slate-400 hover:bg-slate-100 rounded-full"><X className="w-4 h-4"/></button>
+             )}
           </div>
-        )}
-      </div>
+          {isSearchFocused && searchResults.length > 0 && (
+            <div className="absolute top-full left-0 w-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2">
+              {searchResults.map(res => (
+                <button 
+                  key={res.id} 
+                  onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
+                  className="w-full text-left px-5 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col"
+                >
+                  <span className="font-bold text-slate-800 text-sm leading-tight">{res.name}</span>
+                  <div className="flex items-center space-x-2 mt-1">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
+                    {res.mahalla && (
+                      <>
+                        <span className="w-1 h-1 rounded-full bg-slate-200"></span>
+                        <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
+                      </>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toastMessage && (
@@ -1293,6 +1513,172 @@ export default function MapComponent() {
           {toastMessage.text}
         </div>
       )}
+
+      {/* In-App Navigator HUD Panels */}
+      {isNavigationActive && selectedLocations.length >= 2 && (() => {
+        const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
+        const nextPoint = selectedLocations[nextIndex];
+        if (!nextPoint) return null;
+
+        // Compute direct air-distance in kilometers if user's location is active
+        let distanceText = "GPS kutilmoqda...";
+        let calculatedDistanceKm = 0;
+        if (userLocation) {
+          calculatedDistanceKm = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
+          if (calculatedDistanceKm < 1) {
+            distanceText = `${(calculatedDistanceKm * 1000).toFixed(0)} metr`;
+          } else {
+            distanceText = `${calculatedDistanceKm.toFixed(1)} km`;
+          }
+        }
+
+        // Estimated Time of Arrival (approx)
+        const etaMinutes = calculatedDistanceKm ? Math.max(1, Math.round(calculatedDistanceKm * 2)) : 0;
+
+        return (
+          <div className="absolute inset-0 pointer-events-none z-[999] flex flex-col justify-between p-4 font-sans select-none print:hidden">
+            
+            {/* Top HUD Card: Wayfinder / Turn directive */}
+            <div className="pointer-events-auto w-full max-w-lg mx-auto bg-slate-950/95 backdrop-blur-md rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.8)] border border-slate-800 text-white p-4 md:p-5 flex flex-col space-y-3 shrink-0 animate-in slide-in-from-top-4 duration-300">
+              
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="flex h-2.5 w-2.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    {navigationStepIndex === selectedLocations.length && isRoundtrip ? "Yakuniy qaytish" : `Navigatsiya — ${navigationStepIndex}-Manzil`}
+                  </span>
+                </div>
+                <div className="text-[10px] font-bold bg-indigo-500/20 text-indigo-300 px-2.5 py-1 rounded-full border border-indigo-500/30">
+                  {navigationStepIndex} / {selectedLocations.length + (isRoundtrip ? 1 : 0) - 1} ob'ekt
+                </div>
+              </div>
+
+              <div className="flex items-start justify-between space-x-4">
+                <div className="flex items-start space-x-3">
+                  <div className={`p-2.5 rounded-xl shrink-0 ${nextPoint.type === 'dmchen' || nextPoint.type === 'dmtt' ? 'bg-red-500/20 text-red-400' : nextPoint.type === 'maktab' ? 'bg-blue-500/20 text-blue-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                    <Compass className="w-6 h-6 animate-spin" style={{ animationDuration: '10s' }} />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm md:text-lg tracking-tight text-white line-clamp-2 leading-tight">
+                      {nextPoint.name}
+                    </h3>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 bg-slate-900 border border-slate-850 px-1.5 py-0.5 rounded">
+                        {nextPoint.type === 'dmtt' ? "Bog'cha (DMTT)" : nextPoint.type === 'maktab' ? "Maktab" : "Tashkilot"}
+                      </span>
+                      {nextPoint.mahalla && (
+                        <span className="text-[9px] font-bold text-indigo-300 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-900">
+                          {nextPoint.mahalla} mahalla
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => speakCurrentRouteStep(navigationStepIndex)}
+                  className="p-3 bg-slate-900 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded-xl transition-all border border-slate-800 shrink-0 cursor-pointer text-center flex items-center justify-center"
+                  title="Yordamchi ovozli xabarni tinglash"
+                >
+                  <Volume2 className="w-5 h-5" />
+                </button>
+              </div>
+
+              {nextPoint.landmark && (
+                <div className="bg-slate-900 border border-slate-800/80 rounded-xl px-3 py-2 text-xs text-slate-300 font-medium">
+                  🌟 <span className="font-bold text-white">Mo'ljal:</span> {nextPoint.landmark}
+                </div>
+              )}
+
+              {userLocation ? (
+                <div className="mt-2 grid grid-cols-2 gap-2 text-center pt-3 border-t border-slate-800/60">
+                  <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-900/20">
+                    <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Targetgacha masofa</span>
+                    <span className="font-black text-xl text-emerald-400">{distanceText}</span>
+                  </div>
+                  <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-900/20">
+                    <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Taxminiy vaqt</span>
+                    <span className="font-black text-xl text-orange-400">{etaMinutes > 0 ? `~${etaMinutes} daq` : "Hisoblanmoqda..."}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-indigo-950/40 border border-indigo-900/30 px-3 py-2.5 rounded-xl text-center text-xs text-indigo-300 font-medium animate-pulse">
+                  📍 GPS drayveri faollashtirilmoqda, iltimos smartfoningizda geolokatsiyaga ruxsat bering...
+                </div>
+              )}
+            </div>
+
+            {/* Bottom HUD: Control Panel */}
+            <div className="pointer-events-auto w-full max-w-sm mx-auto bg-white/95 backdrop-blur-md rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.3)] border border-slate-100 p-4 shrink-0 flex flex-col space-y-3 md:space-y-4 animate-in slide-in-from-bottom-4 duration-300">
+              
+              <div className="flex items-center justify-between pb-1">
+                <div className="flex items-center space-x-1">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 block"></span>
+                  <span className="text-xs font-black tracking-tight text-slate-800">
+                    Navigator Paneli
+                  </span>
+                </div>
+                
+                {/* Auto center toggle indicator */}
+                <button
+                  onClick={() => setIsAutoCenter(!isAutoCenter)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1.5 border transition-all cursor-pointer ${isAutoCenter ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+                >
+                  <LocateFixed className={`w-3.5 h-3.5 ${isAutoCenter ? 'animate-pulse text-blue-600' : ''}`} />
+                  <span>{isAutoCenter ? "Avto-boshqaruv" : "Muzlatilgan"}</span>
+                </button>
+              </div>
+
+              {/* Steps control buttons */}
+              <div className="flex space-x-2.5">
+                <button
+                  onClick={() => {
+                    const nextVal = Math.max(1, navigationStepIndex - 1);
+                    setNavigationStepIndex(nextVal);
+                  }}
+                  disabled={navigationStepIndex <= 1}
+                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-xl font-bold text-xs md:text-sm text-slate-800 flex items-center justify-center space-x-1.5 transition-all active:scale-95 border border-slate-200 shrink-0 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft className="w-5 h-5 shrink-0" />
+                  <span>Ortga</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const maxSteps = selectedLocations.length + (isRoundtrip ? 1 : 0) - 1;
+                    if (navigationStepIndex < maxSteps) {
+                      setNavigationStepIndex(navigationStepIndex + 1);
+                    } else {
+                      showToast("Siz marshrut oxiriga yetib keldingiz! Tabriklaymiz!", "success");
+                    }
+                  }}
+                  className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-md hover:shadow-lg hover:shadow-indigo-500/10 shrink-0 cursor-pointer"
+                >
+                  <span>Keyingi</span>
+                  <ChevronRight className="w-5 h-5 shrink-0" />
+                </button>
+              </div>
+
+              {/* Complete journey / abort navigation */}
+              <button
+                onClick={() => {
+                  setIsNavigationActive(false);
+                  showToast("Navigatsiya rejimi yakunlandi.", "info");
+                }}
+                className="w-full py-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 cursor-pointer shrink-0 animate-pulse"
+              >
+                <XCircle className="w-4 h-4 shrink-0" />
+                <span>Navigatsiyani Yakunlash</span>
+              </button>
+
+            </div>
+
+          </div>
+        );
+      })()}
 
       {/* Picking Mode Overlay */}
       {(isPickingLocation || isPickingRoutePoint) && (
@@ -1321,7 +1707,7 @@ export default function MapComponent() {
       {(!isPickingLocation && !isPickingRoutePoint && currentUser) && (
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="print:hidden absolute top-20 md:top-24 left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group"
+          className="print:hidden absolute hidden md:flex top-20 md:top-24 left-4 md:left-6 z-[400] bg-white/95 backdrop-blur-md hover:bg-white text-slate-800 pr-4 md:pr-5 pl-1.5 md:pl-2 py-1.5 md:py-2 rounded-xl md:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-100 flex items-center space-x-2 md:space-x-3 transition-all hover:scale-105 active:scale-95 group"
         >
           <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
             <Plus className="w-4 h-4 text-blue-600" />
@@ -1331,7 +1717,7 @@ export default function MapComponent() {
       )}
 
       {/* Floating Map Navigation Tools */}
-      <div className={`print:hidden absolute ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex flex-col space-y-3 items-start`}>
+      <div className={`print:hidden absolute hidden md:flex ${(!isPickingLocation && !isPickingRoutePoint && currentUser) ? 'top-36 md:top-40' : 'top-20 md:top-24'} left-4 md:left-6 z-[400] flex-col space-y-3 items-start`}>
         <button
            onClick={handleGetLocation}
            title="Mening joylashuvimni aniqlash va xaritada ko'rsatish"
@@ -1943,10 +2329,13 @@ export default function MapComponent() {
       <MapContainer 
         center={center} 
         zoom={12} 
-        className="w-full h-screen z-0 print:hidden"
+        className={`w-full h-screen z-0 print:hidden ${isMapLocked ? 'pointer-events-none select-none' : 'pointer-events-auto'}`}
         ref={mapRef}
         zoomControl={false}
         doubleClickZoom={false}
+        dragging={!isMapLocked}
+        touchZoom={!isMapLocked}
+        scrollWheelZoom={!isMapLocked}
       >
         <ZoomControl position="bottomright" />
         {mapSource === 'osm' && (
@@ -1983,8 +2372,7 @@ export default function MapComponent() {
            />
         )}
 
-        {/* User GPS Location Marker */}
-        {userLocation && (
+           {userLocation && (
           <Marker 
             position={userLocation}
             icon={L.divIcon({
@@ -2006,6 +2394,17 @@ export default function MapComponent() {
               📍 Siz shu yerdasiz
             </Tooltip>
           </Marker>
+        )}
+
+        {/* Navigation Guidance Line */}
+        {isNavigationActive && userLocation && selectedLocations.length > 1 && (
+          <Polyline 
+            positions={[userLocation, [selectedLocations[navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex].lat, selectedLocations[navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex].lng]]} 
+            color="#ec4899" 
+            weight={4} 
+            dashArray="10, 10" 
+            opacity={0.8} 
+          />
         )}
         
         {filteredLocations.map((loc) => (
@@ -2173,32 +2572,93 @@ export default function MapComponent() {
         <LocationPicker />
       </MapContainer>
       
-      {/* Floating Settings/Filters Button */}
-      <div className="print:hidden absolute bottom-24 md:bottom-6 left-4 md:left-6 z-[400] pointer-events-auto">
-        <button onClick={() => setIsSettingsOpen(true)} className="bg-white/95 backdrop-blur-md px-4 py-2 md:px-5 md:py-3 rounded-2xl md:rounded-3xl shadow-2xl border border-slate-100 flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 text-slate-800">
-           <Settings2 className="w-4 h-4 md:w-5 md:h-5 text-indigo-600"/>
-           <span className="font-extrabold text-xs md:text-sm tracking-tight text-slate-700">Filtrlar</span>
-        </button>
+      {/* Floating Map Control Dock (Bottom-Left) */}
+      <div className="print:hidden absolute bottom-[88px] md:bottom-6 left-4 md:left-6 z-[400] flex flex-col md:flex-row space-y-2.5 md:space-y-0 md:space-x-3 pointer-events-auto items-start md:items-center">
+         {/* Settings Button */}
+         <button 
+           onClick={() => setIsSettingsOpen(true)} 
+           className="bg-white/95 backdrop-blur-md w-11 h-11 md:w-auto md:px-5 md:py-3 rounded-full md:rounded-3xl shadow-xl md:shadow-2xl border border-slate-100 flex items-center justify-center md:space-x-2 transition-all hover:scale-105 active:scale-95 text-slate-800 shrink-0 cursor-pointer"
+           title="Filtrlar va sozlamalar"
+         >
+           <Settings2 className="w-5 h-5 md:w-5 md:h-5 text-indigo-600 shrink-0" />
+           <span className="font-extrabold text-xs md:text-sm tracking-tight text-slate-700 hidden md:inline">Filtrlar</span>
+         </button>
+
+         {/* GPS Location Button (mobile fallback) */}
+         <button
+            onClick={handleGetLocation}
+            title="Mening joylashuvimni aniqlash"
+            className="md:hidden bg-white/95 backdrop-blur-md w-11 h-11 rounded-full shadow-xl border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 text-slate-800 shrink-0 cursor-pointer"
+         >
+            <LocateFixed className="w-5 h-5 text-blue-600 shrink-0" />
+         </button>
+
+         {/* Add Location Button (mobile fallback) */}
+         {(!isPickingLocation && !isPickingRoutePoint && currentUser) && (
+           <button
+             onClick={() => setIsAddModalOpen(true)}
+             className="md:hidden bg-white/95 backdrop-blur-md w-11 h-11 rounded-full shadow-xl border border-slate-100 flex items-center justify-center transition-all hover:scale-105 active:scale-95 text-slate-800 shrink-0 cursor-pointer"
+             title="Yangi ob'ekt qo'shish"
+           >
+             <Plus className="w-5 h-5 text-green-600 shrink-0" />
+           </button>
+         )}
+
+         {/* Lock/Unlock Map Dragging on Mobile */}
+         <button
+            onClick={() => {
+              const nextVal = !isMapLocked;
+              setIsMapLocked(nextVal);
+              showToast(nextVal ? "Xarita muzlatildi! Sahifani bemalol orqaga surishingiz mumkin." : "Xarita faollashtirildi!", "info");
+            }}
+            className={`w-11 h-11 md:hidden rounded-full shadow-xl border flex items-center justify-center transition-all hover:scale-105 active:scale-95 shrink-0 cursor-pointer ${
+              isMapLocked 
+                ? 'bg-red-500 text-white border-red-400' 
+                : 'bg-white/95 text-slate-800 border-slate-100'
+            }`}
+            title={isMapLocked ? "Xaritani faollashtirish" : "Xaritani muzlatish (Sahifani bemalol aylantirish)"}
+         >
+            <Shield className="w-5 h-5 shrink-0" />
+         </button>
       </div>
 
       {/* Mobile Toggle Navbar Button */}
-      <div className="print:hidden md:hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[400] pointer-events-auto">
-        <button 
-           onClick={() => setIsMobilePanelOpen(!isMobilePanelOpen)} 
-           className="bg-slate-900 px-6 py-3.5 rounded-full shadow-2xl border border-slate-700 flex items-center space-x-2 transition-all active:scale-95 text-white shadow-blue-900/20"
-        >
-           <Route className="w-5 h-5 text-indigo-400"/>
-           <span className="font-extrabold text-sm tracking-tight">Marshrut paneli</span>
-           {selectedLocations.length > 0 && (
-             <div className="ml-2 bg-indigo-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black">
-               {selectedLocations.length}
+      {!isNavigationActive && (
+        <div className="print:hidden md:hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[400] pointer-events-auto w-[92%] max-w-sm">
+          <button 
+             onClick={() => setIsMobilePanelOpen(!isMobilePanelOpen)} 
+             className="w-full bg-slate-900 hover:bg-slate-800 px-4 py-3 rounded-2xl shadow-2xl border border-slate-800 flex items-center justify-between transition-all active:scale-95 text-white"
+          >
+             <div className="flex items-center space-x-2">
+               <Route className="w-5 h-5 text-indigo-400 shrink-0" />
+               <span className="font-extrabold text-xs tracking-tight text-left truncate">
+                 {routeStats ? "Marshrut tayyor" : "Marshrut paneli"}
+               </span>
+               {selectedLocations.length > 0 && (
+                 <div className="ml-1 bg-indigo-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black shrink-0">
+                   {selectedLocations.length}
+                 </div>
+               )}
              </div>
-           )}
-        </button>
-      </div>
+             
+             {routeStats ? (
+               <div className="flex items-center space-x-1.5 text-right bg-slate-800 border border-slate-700 px-2 py-0.5 rounded-lg shrink-0">
+                 <span className="text-[11px] font-black text-emerald-400">
+                   {(routeStats.distance / 1000).toFixed(1)} km
+                 </span>
+                 <span className="text-[11px] font-black text-orange-400">
+                   {Math.round(routeStats.duration / 60)} daq
+                 </span>
+               </div>
+             ) : (
+               <span className="text-[9px] font-black tracking-widest text-indigo-300 uppercase shrink-0">Ochish</span>
+             )}
+          </button>
+        </div>
+      )}
 
       {/* Mobile Overlay */}
-      {isMobilePanelOpen && (
+      {isMobilePanelOpen && !isNavigationActive && (
         <div 
           className="md:hidden fixed inset-0 z-[440] bg-slate-900/40 backdrop-blur-sm transition-opacity pointer-events-auto"
           onClick={() => setIsMobilePanelOpen(false)}
@@ -2206,13 +2666,13 @@ export default function MapComponent() {
       )}
 
       {/* Sidebar: Marshrut va Logistika */}
-      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 md:left-auto left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'}`}>
+      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 md:left-auto left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'} ${isNavigationActive ? 'hidden pointer-events-none' : ''}`}>
         
         {/* Selected Locations Panel */}
-        <div className="flex-1 pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-t-3xl md:rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden max-h-[70vh] md:max-h-none h-full">
+        <div className="flex-1 pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-t-3xl md:rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden max-h-[85vh] md:max-h-none h-full">
           
           {/* Mobile Handle & Close */}
-          <div className="flex items-center justify-between mb-4 md:hidden">
+          <div className="flex items-center justify-between mb-4 md:hidden shrink-0">
             <div className="w-10"></div>
             <div className="w-12 h-1.5 bg-slate-300 rounded-full cursor-pointer" onClick={() => setIsMobilePanelOpen(false)}></div>
             <button onClick={() => setIsMobilePanelOpen(false)} className="w-10 h-10 flex items-center justify-center text-slate-500 hover:text-slate-800 bg-slate-100 rounded-full">
@@ -2266,146 +2726,191 @@ export default function MapComponent() {
             </div>
           </div>
           
-          {/* Saved Routes Accordion/Collapsible */}
-          <div className="mb-4 shrink-0">
-            <button 
-              onClick={() => setShowSavedRoutesList(!showSavedRoutesList)}
-              className="w-full flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition-all font-bold text-xs group cursor-pointer"
-            >
-              <div className="flex items-center space-x-2">
-                <History className="w-4 h-4 text-slate-500 group-hover:text-indigo-600 transition-colors" />
-                <span className="text-slate-700">Mening saqlangan marshrutlarim</span>
-                {savedRoutes.length > 0 && (
-                  <span className="px-1.5 py-0.5 bg-indigo-100 font-extrabold text-indigo-700 rounded text-[9px]">
-                    {savedRoutes.length}
-                  </span>
-                )}
-              </div>
-              <span className="text-[10px] text-slate-400 font-medium">
-                {showSavedRoutesList ? "Yopish" : "Ko'rish"}
-              </span>
-            </button>
-            {showSavedRoutesList && (
-              <div className="mt-2 p-2 bg-slate-50/50 border border-slate-200 rounded-xl max-h-[220px] overflow-y-auto space-y-1.5 scrollbar-thin">
-                {isSavedRoutesLoading ? (
-                  <div className="flex items-center justify-center py-6 text-xs text-slate-400 space-x-1.5">
-                    <div className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                    <span>Yuklanmoqda...</span>
-                  </div>
-                ) : savedRoutes.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-slate-400 font-medium">
-                    Hozircha saqlangan marshrutlar yo'q
-                  </div>
-                ) : (
-                  savedRoutes.map((route) => (
-                    <div 
-                      key={route.id}
-                      onClick={() => handleLoadRoute(route)}
-                      className="group cursor-pointer p-2 bg-white hover:bg-indigo-50/40 border border-slate-100 hover:border-indigo-100 rounded-lg flex items-center justify-between transition-all"
-                    >
-                      <div className="flex flex-col space-y-0.5 overflow-hidden pr-2">
-                        <span className="font-bold text-xs text-slate-800 truncate" title={route.name}>{route.name}</span>
-                        <div className="flex items-center space-x-1.5 text-[9px] text-slate-500 font-semibold font-mono">
-                          <span>📍 {route.locations?.length || 0} manzil</span>
-                          {route.routeStats?.distance && (
-                            <span>• {(route.routeStats.distance / 1000).toFixed(1)} km</span>
-                          )}
-                        </div>
-                      </div>
-                      <button 
-                        onClick={(e) => handleDeleteRoute(route.id, e)}
-                        className="p-1 rounded-md bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shrink-0 cursor-pointer"
-                        title="O'chirish"
+          {/* Scrollable Body: All settings, checkboxes, lists reside here */}
+          <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 space-y-4 pb-2">
+            
+            {/* Saved Routes Accordion/Collapsible */}
+            <div className="shrink-0">
+              <button 
+                onClick={() => setShowSavedRoutesList(!showSavedRoutesList)}
+                className="w-full flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition-all font-bold text-xs group cursor-pointer"
+              >
+                <div className="flex items-center space-x-2">
+                  <History className="w-4 h-4 text-slate-500 group-hover:text-indigo-600 transition-colors" />
+                  <span className="text-slate-700 font-bold">Mening saqlangan marshrutlarim</span>
+                  {savedRoutes.length > 0 && (
+                    <span className="px-1.5 py-0.5 bg-indigo-100 font-extrabold text-indigo-700 rounded text-[9px]">
+                      {savedRoutes.length}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 font-bold">
+                  {showSavedRoutesList ? "Yopish" : "Ko'rish"}
+                </span>
+              </button>
+              {showSavedRoutesList && (
+                <div className="mt-2 p-2 bg-slate-50/50 border border-slate-200 rounded-xl max-h-[180px] overflow-y-auto space-y-1.5 scrollbar-thin">
+                  {isSavedRoutesLoading ? (
+                    <div className="flex items-center justify-center py-6 text-xs text-slate-400 space-x-1.5">
+                      <div className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                      <span>Yuklanmoqda...</span>
+                    </div>
+                  ) : savedRoutes.length === 0 ? (
+                    <div className="text-center py-6 text-xs text-slate-400 font-semibold font-sans">
+                      Hozircha saqlangan marshrutlar yo'q
+                    </div>
+                  ) : (
+                    savedRoutes.map((route) => (
+                      <div 
+                        key={route.id}
+                        onClick={() => handleLoadRoute(route)}
+                        className="group cursor-pointer p-2 bg-white hover:bg-indigo-50/40 border border-slate-100 hover:border-indigo-100 rounded-lg flex items-center justify-between transition-all"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+                        <div className="flex flex-col space-y-0.5 overflow-hidden pr-2">
+                          <span className="font-bold text-xs text-slate-800 truncate" title={route.name}>{route.name}</span>
+                          <div className="flex items-center space-x-1.5 text-[9px] text-slate-500 font-semibold font-mono">
+                            <span>📍 {route.locations?.length || 0} manzil</span>
+                            {route.routeStats?.distance && (
+                              <span>• {(route.routeStats.distance / 1000).toFixed(1)} km</span>
+                            )}
+                          </div>
+                        </div>
+                        <button 
+                          onClick={(e) => handleDeleteRoute(route.id, e)}
+                          className="p-1 rounded-md bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shrink-0 cursor-pointer"
+                          title="O'chirish"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
 
-          <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 min-h-[150px]">
-            {selectedLocations.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-400">
-                <p className="text-sm">Xaritadan manzillarni tanlang</p>
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {selectedLocations.map((loc, idx) => {
-                  let bgColor = 'bg-slate-500';
-                  if (loc.type === 'maktab') bgColor = 'bg-blue-600';
-                  else if (loc.type === 'bogcha' || loc.type === 'dmtt') bgColor = 'bg-red-500';
-                  else if (loc.type === 'boshqa' || loc.type === 'tashkilot') bgColor = 'bg-emerald-600';
+            {/* List of active locations */}
+            <div>
+              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2 px-1">Tanlangan manzillar:</span>
+              {selectedLocations.length === 0 ? (
+                <div className="py-8 flex flex-col items-center justify-center text-center p-4 text-slate-400 bg-slate-50/40 border border-dashed border-slate-200 rounded-2xl">
+                  <p className="text-xs font-semibold">Xaritadan manzillarni bosib tanlang</p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {selectedLocations.map((loc, idx) => {
+                    let bgColor = 'bg-slate-500';
+                    if (loc.type === 'maktab') bgColor = 'bg-blue-600';
+                    else if (loc.type === 'bogcha' || loc.type === 'dmtt') bgColor = 'bg-red-500';
+                    else if (loc.type === 'boshqa' || loc.type === 'tashkilot') bgColor = 'bg-emerald-600';
 
-                  const isStart = idx === 0;
+                    const isStart = idx === 0;
 
-                  return (
-                    <div 
-                      key={loc.id} 
-                      className={`relative w-8 h-8 rounded-full text-white text-xs font-bold flex items-center justify-center shadow-md cursor-pointer group transition-colors border-2 ${isStart ? 'border-yellow-400 border-2 scale-110 shadow-xl z-20' : 'border-white'} ${bgColor}`} 
-                      title={`${loc.name}${isStart ? ' (Boshlang\'ich nuqta)' : ''}`}
-                    >
-                      <span className="group-hover:hidden" onClick={() => {
-                        // Move this point to front (make it start point)
-                        if (idx !== 0) {
-                          const newLocations = [...selectedLocations];
-                          newLocations.splice(idx, 1);
-                          newLocations.unshift(loc);
-                          setSelectedLocations(newLocations);
-                          showToast(`${loc.name} boshlang'ich nuqta etib belgilandi`, 'success');
-                          setRouteGeometry(null);
-                          setRouteStats(null);
-                        }
-                      }}>{getShortLabelString(loc.name)}</span>
-                      <X className="w-4 h-4 hidden group-hover:block" onClick={(e) => removeLocation(e, loc.id)} />
-                      {isStart && <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full border-2 border-white pointer-events-none"></div>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    return (
+                      <div 
+                        key={loc.id} 
+                        className={`relative w-8 h-8 rounded-full text-white text-xs font-extrabold flex items-center justify-center shadow-md cursor-pointer group transition-all border-2 ${isStart ? 'border-yellow-400 scale-105 shadow-md z-20' : 'border-white'} ${bgColor}`} 
+                        title={`${loc.name}${isStart ? ' (Boshlang\'ich nuqta)' : ''}`}
+                      >
+                        <span className="group-hover:hidden" onClick={() => {
+                          if (idx !== 0) {
+                            const newLocations = [...selectedLocations];
+                            newLocations.splice(idx, 1);
+                            newLocations.unshift(loc);
+                            setSelectedLocations(newLocations);
+                            showToast(`${loc.name} boshlang'ich nuqta etib belgilandi`, 'success');
+                            setRouteGeometry(null);
+                            setRouteStats(null);
+                          }
+                        }}>{getShortLabelString(loc.name)}</span>
+                        <X className="w-4 h-4 hidden group-hover:block" onClick={(e) => removeLocation(e, loc.id)} />
+                        {isStart && <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full border border-white pointer-events-none"></div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-          <div className="print:hidden pt-3 border-t border-slate-100 mt-2 space-y-3">
-            {/* Joylashuvimni boshiga qo'shish tugmasi */}
-            <div className="flex justify-center pb-1">
+            {/* Configs, GPS addition, Checkboxes */}
+            <div className="pt-2.5 border-t border-slate-100 space-y-3">
+              {/* Add GPS to Start button */}
               <button 
                 onClick={handleAddGPSToStart}
-                className="w-full sm:w-[220px] h-[32px] rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold flex items-center justify-center space-x-1.5 shadow-sm hover:shadow active:scale-95 transition-all cursor-pointer"
+                className="w-full h-[34px] rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black flex items-center justify-center space-x-1.5 transition-all active:scale-95 border border-indigo-100 cursor-pointer"
                 title="Mening hozirgi GPS joylashuvimni marshrut boshiga birinchi nuqta qilib qo'yish"
               >
-                <LocateFixed className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Marshrut boshiga joylashuvimni qo'shish</span>
+                <LocateFixed className="w-4 h-4 shrink-0 text-indigo-600" />
+                <span className="truncate">Marshrut boshiga GPS joylashuvimni qo'shish</span>
               </button>
-            </div>
-            {selectedLocations.length > 0 && (
-              <label className="flex items-center space-x-2 text-sm font-semibold text-slate-700 cursor-pointer p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
-                <input 
-                  type="checkbox" 
-                  checked={hideUnselected}
-                  onChange={(e) => setHideUnselected(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                />
-                <span className="text-xs">Faqat tanlanganlarini xaritada ko'rsatish</span>
-              </label>
-            )}
-            
-            {selectedLocations.length > 0 && (
-               <p className="text-[10px] text-slate-500 italic px-1 mb-2">
-                 * Ro'yxatdagi <strong className="text-slate-800">1-manzil</strong> mudom boshlang'ich nuqta hisoblanadi. (O'zgartirish uchun kerakli nuqtaga bosing)
-               </p>
-            )}
 
-            <div className="flex space-x-2">
+              {selectedLocations.length > 0 && (
+                <div className="flex flex-col space-y-2">
+                  <label className="flex items-center space-x-2 text-sm font-semibold text-slate-700 cursor-pointer p-1.5 hover:bg-slate-50 rounded-lg transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={hideUnselected}
+                      onChange={(e) => setHideUnselected(e.target.checked)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                    />
+                    <span className="text-xs">Faqat tanlanganlarini xaritada ko'rsatish</span>
+                  </label>
+
+                  {selectedLocations.length >= 2 && (
+                    <label className="flex items-center space-x-2 text-[11px] font-semibold text-slate-700 cursor-pointer px-1.5 py-1 hover:bg-slate-50 rounded-xl transition-colors">
+                      <input 
+                        type="checkbox" 
+                        checked={isRoundtrip} 
+                        onChange={(e) => {
+                          setIsRoundtrip(e.target.checked);
+                          setRouteGeometry(null);
+                          setRouteStats(null);
+                        }} 
+                        className="rounded border-slate-300 text-blue-600 w-3.5 h-3.5 cursor-pointer" 
+                      />
+                      <span>Aylanma marshrut (Oxirida boshga qaytish)</span>
+                    </label>
+                  )}
+                </div>
+              )}
+              
+              {selectedLocations.length > 0 && (
+                 <p className="text-[10px] text-slate-500 italic px-1 leading-normal">
+                   * Ro'yxatdagi <strong className="text-slate-800">1-manzil</strong> mudom boshlang'ich nuqta hisoblanadi. (Boshqasiga bosing)
+                 </p>
+              )}
+
+              {selectedLocations.length > 5 && (
+                 <div className="flex flex-col space-y-2 bg-slate-50 border border-slate-200 px-3 py-2.5 rounded-xl">
+                   <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-600">Mashinalar / Vzvodlar soni:</span>
+                      <div className="flex items-center shadow-sm rounded-lg overflow-hidden border border-slate-200 bg-white">
+                        <button type="button" onClick={() => setVehiclesCount(Math.max(1, vehiclesCount - 1))} className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-600 font-bold border-r border-slate-200 transition-colors">-</button>
+                        <input type="number" value={vehiclesCount} readOnly className="w-8 text-center text-xs font-black py-1 text-slate-900 outline-none" />
+                        <button type="button" onClick={() => setVehiclesCount(Math.min(10, vehiclesCount + 1))} className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-600 font-bold border-l border-slate-200 transition-colors">+</button>
+                      </div>
+                   </div>
+                   {vehiclesCount > 1 && (
+                     <label className="flex items-center space-x-2 text-[11px] font-semibold text-slate-700 cursor-pointer pt-1 border-t border-slate-200">
+                       <input type="checkbox" checked={sharedStartPoint} onChange={(e) => setSharedStartPoint(e.target.checked)} className="rounded border-slate-300 text-blue-600 w-3 h-3 cursor-pointer" />
+                       <span>1-chi manzil hamma uchun boshlang'ich bo'lsin</span>
+                     </label>
+                   )}
+                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* Sticky Footer: Action buttons & navigation redirections */}
+          <div className="print:hidden pt-3 border-t border-slate-100 shrink-0 space-y-3 bg-white/95">
+            
+            {/* Primary computation trigger */}
+            <div className="w-full">
               <button 
-                className={`${
-                  selectedLocations.length < 2 ? 'flex-1' : 'flex-[2]'
-                } py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                className={`w-full py-3 rounded-2xl font-black text-xs md:text-sm flex items-center justify-center space-x-2 transition-all cursor-pointer ${
                   selectedLocations.length < 2 
                     ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-slate-900 hover:bg-slate-800 text-white shadow-lg active:scale-95'
+                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg active:scale-95 shadow-indigo-600/10'
                 }`}
                 onClick={() => calculateOptimizedRoute()}
                 disabled={selectedLocations.length < 2 || isCalculating}
@@ -2416,74 +2921,66 @@ export default function MapComponent() {
                       <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
                       Hisoblanmoqda...
                     </span>
-                ) : (
-                    <span className="flex items-center space-x-2">
-                      <Navigation className="w-4 h-4" />
-                      <span>Hisoblash</span>
+                 ) : (
+                    <span className="flex items-center space-x-1.5">
+                      <Navigation className="w-4 h-4 text-indigo-200 animate-pulse" />
+                      <span>Marshrutni hisoblash</span>
                     </span>
-                )}
+                 )}
               </button>
-
-              {selectedLocations.length >= 2 && (
-                <button
-                  onClick={() => setShowSaveRouteForm(!showSaveRouteForm)}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center space-x-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm active:scale-95 transition-all cursor-pointer"
-                  title="Marshrutni saqlash"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>Saqlash</span>
-                </button>
-              )}
             </div>
 
-            {showSaveRouteForm && selectedLocations.length >= 2 && (
-              <div className="mt-2 p-3 bg-indigo-50/50 border border-indigo-100 rounded-2xl flex flex-col space-y-2 animate-in slide-in-from-top-2 duration-200">
-                <span className="text-[11px] font-bold text-indigo-800">Yangi Marshrut Nomi:</span>
-                <div className="flex space-x-2">
-                  <input 
-                    type="text" 
-                    value={newRouteName}
-                    onChange={(e) => setNewRouteName(e.target.value)}
-                    placeholder="Masalan: Bulung'ur reysi..."
-                    className="flex-1 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-xs outline-none focus:border-indigo-500 font-medium text-slate-800"
-                    maxLength={150}
-                    disabled={isSavingRoute}
-                  />
-                  <button 
-                    onClick={handleSaveRoute}
-                    disabled={isSavingRoute}
-                    className="px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center shadow transition-colors cursor-pointer disabled:opacity-50"
-                  >
-                    {isSavingRoute ? "..." : "Saqlash"}
-                  </button>
-                </div>
-              </div>
-            )}
-            
-            {selectedLocations.length > 5 && (
-               <div className="flex flex-col space-y-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl">
-                 <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-slate-600">Marshrutlar soni:</span>
-                    <div className="flex items-center shadow-sm rounded-lg overflow-hidden border border-slate-200">
-                      <button onClick={() => setVehiclesCount(Math.max(1, vehiclesCount - 1))} className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-600 font-bold border-r border-slate-200 transition-colors">-</button>
-                      <input type="number" value={vehiclesCount} readOnly className="w-8 text-center text-xs font-black py-1 bg-white text-slate-900 outline-none" />
-                      <button onClick={() => setVehiclesCount(Math.min(10, vehiclesCount + 1))} className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-600 font-bold border-l border-slate-200 transition-colors">+</button>
-                    </div>
-                 </div>
-                 {vehiclesCount > 1 && (
-                   <label className="flex items-center space-x-2 text-[11px] font-semibold text-slate-700 cursor-pointer pt-1 border-t border-slate-200">
-                     <input type="checkbox" checked={sharedStartPoint} onChange={(e) => setSharedStartPoint(e.target.checked)} className="rounded border-slate-300 text-blue-600 w-3 h-3" />
-                     <span>1-chi manzil hamma uchun boshlang'ich bo'lsin</span>
-                   </label>
-                 )}
-               </div>
-            )}
-            
+            {/* External Navigation Links (Visible when >= 2 locations exist) */}
             {selectedLocations.length >= 2 && (
-               <label className="flex items-center space-x-2 text-[11px] font-semibold text-slate-700 cursor-pointer p-1.5 hover:bg-slate-50 rounded-xl transition-colors">
-                 <input type="checkbox" checked={isRoundtrip} onChange={(e) => setIsRoundtrip(e.target.checked)} className="rounded border-slate-300 text-blue-600 w-3 h-3" />
-                 <span>Aylanma marshrut (Oxirida boshlang'ichga qaytish)</span>
-               </label>
+               <div className="pt-2.5 border-t border-slate-100 flex flex-col space-y-2">
+                 <div className="flex justify-between items-center px-1">
+                   <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-widest leading-none">
+                     {routeStats ? "Optimallashtirilgan navigatsiya:" : "Navigatorda boshlash:"}
+                   </span>
+                   {!routeStats && (
+                     <span className="text-[8px] font-extrabold bg-yellow-105 text-yellow-800 px-1 hover:bg-yellow-150 rounded leading-normal" title="Hozirgi ketma-ketlikda. Optimallashtirilgan marshrut olish uchun avval 'Marshrutni hisoblash' tugmasini bosing">
+                       ketma-ketlikda
+                     </span>
+                   )}
+                 </div>
+                 
+                 <div className="flex space-x-2">
+                   <a 
+                     href={getGoogleMapsUrl(selectedLocations)}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="flex-1 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white hover:bg-slate-800 font-bold text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-sm hover:shadow-md cursor-pointer no-underline"
+                   >
+                     <ExternalLink className="w-3.5 h-3.5 text-green-400" />
+                     <span>Google Maps</span>
+                   </a>
+                   <a 
+                     href={getYandexMapsUrl(selectedLocations)}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="flex-1 py-2 rounded-xl bg-orange-50 border border-orange-200 text-orange-700 hover:bg-orange-100 font-bold text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-sm hover:shadow-md cursor-pointer no-underline"
+                   >
+                     <ExternalLink className="w-3.5 h-3.5 text-orange-500" />
+                     <span>Yandex Nav</span>
+                   </a>
+                 </div>
+
+                 {/* Pure In-App Navigator Trigger */}
+                 <button
+                   onClick={() => {
+                     setIsNavigationActive(true);
+                     setNavigationStepIndex(1);
+                     setIsAutoCenter(true);
+                     setIsMobilePanelOpen(false);
+                     showToast("O'zimizning navigator faollashdi! Qurilmangiz GPS signali orqali yo'lingiz kuzatib boriladi.", "success");
+                   }}
+                   className="w-full py-3.5 mt-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-95 text-white rounded-xl font-bold text-xs md:text-sm flex items-center justify-center space-x-1.5 transition-all active:scale-95 shadow-lg shadow-indigo-600/20 shrink-0 cursor-pointer"
+                   title="Ushbu saytning o'zida GPS navigatsiya rejimini ishga tushirish"
+                 >
+                   <Compass className="w-4 h-4 animate-spin text-indigo-100" style={{ animationDuration: '6s' }} />
+                   <span>Yo'lga chiqish (Navigator)</span>
+                 </button>
+               </div>
             )}
           </div>
         </div>
@@ -2496,20 +2993,12 @@ export default function MapComponent() {
                 <Route className="w-5 h-5 text-indigo-600" />
                 <div>
                   <h3 className="font-extrabold text-[15px] text-slate-900 tracking-tight">Marshrut Ma'lumotlari</h3>
-                  <p className="text-[9px] text-slate-500 font-medium leading-tight">Chop etilganda panellar yashiriladi</p>
+                  <p className="text-[9px] text-slate-500 font-medium leading-tight">Navigatsiya QR-kodi yuklandi</p>
                 </div>
               </div>
-              <button 
-                onClick={() => window.print()}
-                className="w-10 h-10 flex flex-col items-center justify-center bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-xl transition-all shadow-sm active:scale-95 group"
-                title="Smetani chop etish"
-              >
-                <Printer className="w-4 h-4 ml-0.5" />
-                <span className="text-[8px] font-bold mt-0.5 uppercase tracking-wider group-hover:text-indigo-600 text-slate-500">PDF</span>
-              </button>
             </div>
             
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                 <div className="flex items-center space-x-1.5 mb-1 text-blue-600">
                   <MapIcon className="w-3.5 h-3.5" />
@@ -2530,28 +3019,93 @@ export default function MapComponent() {
               </div>
             </div>
 
-            {routeStats.routes && routeStats.routes.length > 0 && (
-              <div className="mt-4 space-y-3">
-                <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 border-b border-slate-100 pb-1">Tafsilotlar</h4>
-                {routeStats.routes.map((route: any, index: number) => (
-                  <div key={index} className="p-3 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col gap-2 relative overflow-hidden group">
-                    <div className="absolute top-0 left-0 bottom-0 w-1 opacity-80" style={{backgroundColor: route.color}}></div>
-                    <div className="flex items-center justify-between pl-2">
-                       <div className="flex items-center space-x-2">
-                          <span className="font-extrabold text-xs text-slate-800 tracking-tight" style={{color: route.color}}>Marshrut #{index + 1}</span>
-                       </div>
-                       <span className="text-[10px] font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100">
-                          {route.locations.length} manzil
-                       </span>
-                    </div>
-                    <div className="flex justify-between text-[11px] font-semibold text-slate-500 pl-2">
-                       <span className="flex items-center"><MapIcon className="w-3 h-3 mr-1" /> {(route.distance / 1000).toFixed(1)} km</span>
-                       <span className="flex items-center"><Clock className="w-3 h-3 mr-1" /> {Math.round(route.duration / 60)} daq</span>
-                    </div>
-                  </div>
-                ))}
+            {/* QR Code Segment for Navigator */}
+            <div className="mt-4 border-t border-slate-100 pt-4 flex flex-col items-center">
+              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 self-start">Smartfonda ochish (QR kod):</h4>
+              
+              {/* Multi-vehicle branch: Route selection dropdown if routes > 1 */}
+              {routeStats.routes && routeStats.routes.length > 1 && (
+                <div className="w-full mb-3">
+                  <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Moshina tanlash:</label>
+                  <select 
+                    value={selectedRouteQrIdx} 
+                    onChange={(e) => setSelectedRouteQrIdx(Number(e.target.value))}
+                    className="w-full text-xs font-bold bg-slate-50 border border-slate-150 p-2 rounded-xl text-slate-700 outline-none cursor-pointer hover:border-slate-300"
+                  >
+                    {routeStats.routes.map((_, rIdx) => (
+                      <option key={rIdx} value={rIdx}>Moshina #{rIdx + 1} yo'nalishi</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Navigator Engine Tabs */}
+              <div className="flex w-full bg-slate-100 p-1 rounded-xl mb-4">
+                <button
+                  type="button"
+                  onClick={() => setQrMapSelected('google')}
+                  className={`flex-1 py-1.5 font-bold text-xs rounded-lg transition-all ${
+                    qrMapSelected === 'google' 
+                      ? 'bg-blue-600 text-white shadow' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Google Maps
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQrMapSelected('yandex')}
+                  className={`flex-1 py-1.5 font-bold text-xs rounded-lg transition-all ${
+                    qrMapSelected === 'yandex' 
+                      ? 'bg-orange-500 text-white shadow' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Yandex Maps
+                </button>
               </div>
-            )}
+
+              {/* QR Code Container */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner flex flex-col items-center justify-center w-full min-h-[220px]">
+                {(() => {
+                  const activeRouteObj = routeStats.routes && routeStats.routes[selectedRouteQrIdx] 
+                    ? routeStats.routes[selectedRouteQrIdx] 
+                    : { locations: selectedLocations };
+                  const targetNavigationUrl = qrMapSelected === 'google' 
+                    ? getGoogleMapsUrl(activeRouteObj.locations)
+                    : getYandexMapsUrl(activeRouteObj.locations);
+                  const qrCodeImageSource = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(targetNavigationUrl)}`;
+
+                  return (
+                    <>
+                      <div className="bg-white p-2.5 rounded-2xl shadow-sm border border-slate-100 mb-3 hover:scale-[1.02] transition-transform duration-200">
+                        <img 
+                          src={qrCodeImageSource} 
+                          alt="Marshrut QR kodi" 
+                          referrerPolicy="no-referrer"
+                          className="w-40 h-40 object-contain rounded-lg"
+                        />
+                      </div>
+                      <p className="text-[10px] text-center text-slate-500 font-semibold px-2">
+                        Telefoningiz kamerasini QR-kodga qarating va navigatsiyani bir zumda oching.
+                      </p>
+                      <div className="mt-3 flex space-x-2 w-full">
+                        <a 
+                          href={targetNavigationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[10px] rounded-xl flex items-center justify-center space-x-1.5 border border-slate-200 transition-colors cursor-pointer no-underline text-center shadow-sm"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span>Sarlavhani ochish</span>
+                        </a>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+            </div>
           </div>
         )}
 

@@ -106,10 +106,10 @@ if (process.env.RENDER) {
     // AI Processing
     try {
         const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
+          model: "gemini-3.5-flash",
           contents: userText,
           config: {
-            systemInstruction: "Siz Bulung'ur MMTB logistika botisiz. Qaysi ob'ekt(lar) qidirilayotganini aniqlab, ularning nomi/raqami va turini qaytaring. Masalan: '15 maktab va 3 bog'cha' desa [{query: '15', type: 'maktab'}, {query: '3', type: 'dmtt'}]. 'Bog'cha', 'DMTT', 'MTT' barchasi 'dmtt' hisoblanadi. Agar nomi yoki turi aniq bo'lmasa, uni qanday yozgan bo'lsa shundayligicha bering.",
+            systemInstruction: "Siz Bulung'ur MMTB logistika botisiz. Foydalanuvchi xabaridan qidirilayotgan barcha ob'ektlarni (maktab va bog'chalarni) aniqlang va ularni ro'yxat qilib ajrating.\n\nMisollar:\n- 'Yangiobodda qaysi maktablar bor edi' yoki 'Yangiobod maktabi' -> [{'query': 'Yangiobod', 'type': 'maktab'}]\n- '9 maktab' -> [{'query': '9', 'type': 'maktab'}]\n- '4-12-16-bogchalar' -> [{'query': '4', 'type': 'dmtt'}, {'query': '12', 'type': 'dmtt'}, {'query': '16', 'type': 'dmtt'}]\n- 'Sohibkor mahallasidagi bog\'cha' -> [{'query': 'Sohibkor', 'type': 'dmtt'}]\n- '15-maktab va 3-bog\'cha' -> [{'query': '15', 'type': 'maktab'}, {'query': '3', 'type': 'dmtt'}]\n\nObyekt turi 'type' maydoni uchun: 'maktab' (maktablar uchun), 'dmtt' (bog'chalar/DMTT/MTTlar uchun), 'barchasi' yoki 'boshqa' (aniq bo'lmasa).\n\nAgar foydalanuvchi ob'ekt qidirmayotgan bo'lsa (faqat salomlashsa yoki umumiy gap gapirsa), 'replyMessage' maydoniga uzbek tilida muloyim javob yozing. Hech qanday markdown maxsus belgilaridan (* kabi) foydalanmang.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -147,22 +147,54 @@ if (process.env.RENDER) {
               if (data.name && data.lat && data.lng) allLocations.push({ id: doc.id, ...data });
             });
             
-            // Collect all matched locations
+            // Collect all matched locations with helper matching function
             const matchedLocations = [];
             const matchedIds = new Set();
+
+            const isLocMatch = (loc, qStr, tStr) => {
+                const nameLower = (loc.name || "").toLowerCase();
+                const mahallaLower = (loc.mahalla || "").toLowerCase();
+                const landmarkLower = (loc.landmark || "").toLowerCase();
+                const qLower = qStr.toLowerCase().trim();
+
+                // Match types
+                if (tStr === 'maktab' && loc.type !== 'maktab') return false;
+                if ((tStr === 'dmtt' || tStr.includes('bog')) && loc.type !== 'dmtt') return false;
+
+                // 1. Exact number matching to prevent '9' from matching '59', '29', etc.
+                const qNums = qLower.match(/\d+/g);
+                if (qNums && qNums.length > 0) {
+                    const locNums = nameLower.match(/\d+/g);
+                    if (locNums && locNums.length > 0) {
+                        const hasExactNumber = qNums.some(qNum => locNums.includes(qNum));
+                        if (hasExactNumber) return true;
+                        return false;
+                    }
+                }
+
+                // 2. Direct string contains matching
+                if (nameLower.includes(qLower) || mahallaLower.includes(qLower) || landmarkLower.includes(qLower)) {
+                    return true;
+                }
+
+                // 3. Uzbek Locative/Possessive Suffix Stripping for mahalla / names
+                if (qLower.length > 4) {
+                    const stemmed = qLower.replace(/(da|dagi|ning|si|i|dan|ga|ligi|lar|lari)$/, '').trim();
+                    if (stemmed.length > 2) {
+                        if (nameLower.includes(stemmed) || mahallaLower.includes(stemmed) || landmarkLower.includes(stemmed)) {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            };
 
             for (const target of result.searchTargets) {
                 const queryStr = (target.query || target).toString().toLowerCase().trim();
                 const typeStr = (target.type || "").toLowerCase().trim();
                 
-                const found = allLocations.filter(loc => {
-                    const matchName = loc.name.toLowerCase().includes(queryStr);
-                    if (!matchName) return false;
-                    
-                    if (typeStr === 'maktab') return loc.type === 'maktab';
-                    if (typeStr === 'dmtt' || typeStr.includes('bog')) return loc.type === 'dmtt';
-                    return true;
-                });
+                const found = allLocations.filter(loc => isLocMatch(loc, queryStr, typeStr));
                 
                 for (const loc of found) {
                     if (!matchedIds.has(loc.id)) {
@@ -196,7 +228,7 @@ Maydoni: ${loc.area ? loc.area + " ga" : "kiritilmagan"}
 Vazifa: Foydalanuvchiga ushbu joy qayerda ekanligini odamga o'xshab, muloyim va tushunarli tarzda izohlab bering. Agar mo'ljal kiritilgan bo'lsa, albatta yozing (Masalan: "Ushbu maktab ... mo'ljalida joylashgan"). Agar mo'ljal kiritilmagan bo'lsa, "Afsuski, aniq mo'ljal kiritilmagan, lekin xaritadagi aniq joylashuvini quyida yuborganman" deb tushuntiring. Imkon qadar qisqa (2-3 gap) va tabiiy matn yarating. Hech qanday markdown qalinlarsiz sof matn qaytaring.`;
 
                     const descRes = await ai.models.generateContent({
-                        model: "gemini-3-flash-preview",
+                        model: "gemini-3.5-flash",
                         contents: prompt
                     });
                     if (descRes.text) {
@@ -231,20 +263,26 @@ Vazifa: Foydalanuvchiga ushbu joy qayerda ekanligini odamga o'xshab, muloyim va 
                         });
                     }
 
-                    let messageTxt = "Sizning aqlli marshrutingiz tayyor:\n\n";
+                    let messageTxt = "Boradigan manzillaringiz:\n\n";
                     orderedLocations.forEach((loc, index) => {
-                        messageTxt += `${index + 1}-boradigan joyingiz: ${loc.name}\n`;
+                        messageTxt += `${index + 1}. ${loc.name}\n`;
                     });
 
                     // Build Multi-stop Yandex URL
-                    // format: ~lat,lng~lat,lng~lat,lng
                     const yandexCoords = orderedLocations.map(loc => `~${loc.lat},${loc.lng}`).join('');
                     const yandexUrl = `https://yandex.ru/maps/?rtext=${yandexCoords}`;
+
+                    // Build Multi-stop Google URL
+                    const googleOrigin = `${orderedLocations[0].lat},${orderedLocations[0].lng}`;
+                    const googleDest = `${orderedLocations[orderedLocations.length - 1].lat},${orderedLocations[orderedLocations.length - 1].lng}`;
+                    const googleWaypoints = orderedLocations.slice(1, -1).map(w => `${w.lat},${w.lng}`).join('%7C');
+                    const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${googleOrigin}&destination=${googleDest}${googleWaypoints ? `&waypoints=${googleWaypoints}` : ''}&travelmode=driving`;
 
                     await ctx.reply(messageTxt, {
                       reply_markup: {
                          inline_keyboard: [[
-                            { text: "🗺 Yandex Navigator orqali yurish", url: yandexUrl }
+                            { text: "🗺 Yandex Navigator", url: yandexUrl },
+                            { text: "📍 Google Maps", url: googleUrl }
                          ]]
                       }
                     });
@@ -258,10 +296,16 @@ Vazifa: Foydalanuvchiga ushbu joy qayerda ekanligini odamga o'xshab, muloyim va 
                     const yandexCoords = matchedLocations.map(loc => `~${loc.lat},${loc.lng}`).join('');
                     const yandexUrl = `https://yandex.ru/maps/?rtext=${yandexCoords}`;
 
+                    const googleOrigin = `${matchedLocations[0].lat},${matchedLocations[0].lng}`;
+                    const googleDest = `${matchedLocations[matchedLocations.length - 1].lat},${matchedLocations[matchedLocations.length - 1].lng}`;
+                    const googleWaypoints = matchedLocations.slice(1, -1).map(w => `${w.lat},${w.lng}`).join('%7C');
+                    const googleUrlFallback = `https://www.google.com/maps/dir/?api=1&origin=${googleOrigin}&destination=${googleDest}${googleWaypoints ? `&waypoints=${googleWaypoints}` : ''}&travelmode=driving`;
+
                     await ctx.reply(messageTxt, {
                       reply_markup: {
                          inline_keyboard: [[
-                            { text: "🗺 Yandex'da ochish", url: yandexUrl }
+                            { text: "🗺 Yandex'da ochish", url: yandexUrl },
+                            { text: "📍 Google Maps'da", url: googleUrlFallback }
                          ]]
                       }
                     });
