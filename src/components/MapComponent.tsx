@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON, useMapEvents, Circle, Tooltip, ZoomControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -162,6 +163,303 @@ export default function MapComponent() {
   });
   const [isCalculating, setIsCalculating] = useState(false);
 
+  // Picture-in-Picture navigation overlay states & refs
+  const [isPipActive, setIsPipActive] = useState(false);
+  const [isFloatingHudVisible, setIsFloatingHudVisible] = useState(true);
+  const [showHudCloseBtn, setShowHudCloseBtn] = useState(false);
+  const pipVideoRef = useRef<HTMLVideoElement | null>(null);
+  const pipCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const drawPipFrame = (
+    ctx: CanvasRenderingContext2D, 
+    width: number, 
+    height: number,
+    data: {
+      turnDistanceText: string;
+      turnInstruction: string;
+      turnModifier: string;
+      turnType: string;
+      nextTurnTypeAfterThis: string;
+      etaMinutes: number;
+      distanceText: string;
+      destinationName: string;
+    }
+  ) => {
+    // Clear & draw background
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#0f172a'); // Very elegant dark slate
+    grad.addColorStop(1, '#020617'); // Almost black
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw glowing orbit accents
+    ctx.beginPath();
+    ctx.arc(width / 2, 120, 70, 0, 2 * Math.PI);
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+    ctx.fill();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Draw maneuver arrow on canvas based on modifier
+    ctx.lineWidth = 14;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#ffffff';
+    ctx.fillStyle = '#ffffff';
+
+    const mod = data.turnModifier;
+    const type = data.turnType;
+
+    if (type === 'arrive') {
+      // Draw a Red flag icon
+      ctx.beginPath();
+      ctx.moveTo(256, 160);
+      ctx.lineTo(256, 75);
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = '#9ca3af';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(256, 72);
+      ctx.lineTo(310, 92);
+      ctx.lineTo(256, 112);
+      ctx.fillStyle = '#ef4444';
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      switch (mod) {
+        case 'left':
+        case 'sharp left':
+          // Start bottom right of circle, go up, then turn left
+          ctx.moveTo(280, 155);
+          ctx.arcTo(280, 120, 240, 120, 25);
+          ctx.lineTo(210, 120);
+          ctx.stroke();
+          // Arrow head
+          ctx.beginPath();
+          ctx.moveTo(225, 105);
+          ctx.lineTo(200, 120);
+          ctx.lineTo(225, 135);
+          ctx.fill();
+          break;
+        case 'right':
+        case 'sharp right':
+          ctx.moveTo(232, 155);
+          ctx.arcTo(232, 120, 272, 120, 25);
+          ctx.lineTo(302, 120);
+          ctx.stroke();
+          // Arrow head
+          ctx.beginPath();
+          ctx.moveTo(287, 105);
+          ctx.lineTo(312, 120);
+          ctx.lineTo(287, 135);
+          ctx.fill();
+          break;
+        case 'slight left':
+          ctx.moveTo(270, 160);
+          ctx.quadraticCurveTo(270, 120, 225, 100);
+          ctx.stroke();
+          // Arrow head
+          ctx.beginPath();
+          ctx.moveTo(240, 85);
+          ctx.lineTo(212, 95);
+          ctx.lineTo(220, 125);
+          ctx.fill();
+          break;
+        case 'slight right':
+          ctx.moveTo(242, 160);
+          ctx.quadraticCurveTo(242, 120, 287, 100);
+          ctx.stroke();
+          // Arrow head
+          ctx.beginPath();
+          ctx.moveTo(272, 125);
+          ctx.lineTo(300, 95);
+          ctx.lineTo(272, 85);
+          ctx.fill();
+          break;
+        case 'uturn':
+        case 'u-turn':
+          ctx.arc(256, 125, 25, Math.PI, 0, false);
+          ctx.moveTo(231, 125);
+          ctx.lineTo(231, 160);
+          ctx.moveTo(281, 125);
+          ctx.lineTo(281, 160);
+          ctx.stroke();
+          // Arrow head on left lane
+          ctx.beginPath();
+          ctx.moveTo(216, 145);
+          ctx.lineTo(231, 165);
+          ctx.lineTo(246, 145);
+          ctx.fill();
+          break;
+        default: // 'straight' or depart
+          ctx.moveTo(256, 160);
+          ctx.lineTo(256, 85);
+          ctx.stroke();
+          // Arrow head
+          ctx.beginPath();
+          ctx.moveTo(241, 105);
+          ctx.lineTo(256, 80);
+          ctx.lineTo(271, 105);
+          ctx.fill();
+          break;
+      }
+    }
+
+    // Write distance text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(data.turnDistanceText || data.distanceText || '0 m', width / 2, 222);
+
+    // Write instruction text
+    ctx.fillStyle = '#94a3b8'; // light slate
+    ctx.font = 'bold 22px sans-serif';
+    
+    // Auto wrapping instruction text helper
+    const words = data.turnInstruction.split(' ');
+    let line = '';
+    let y = 275;
+    const lineHeight = 30;
+    const maxWidth = width - 40;
+    
+    for (let n = 0; n < words.length; n++) {
+      let testLine = line + words[n] + ' ';
+      let metrics = ctx.measureText(testLine);
+      let testWidth = metrics.width;
+      if (testWidth > maxWidth && n > 0) {
+        ctx.fillText(line.trim(), width / 2, y);
+        line = words[n] + ' ';
+        y += lineHeight;
+        if (y > 340) break; // prevent overflowing down
+      } else {
+        line = testLine;
+      }
+    }
+    if (y <= 340) {
+      ctx.fillText(line.trim(), width / 2, y);
+    }
+
+    // Draw beautiful bottom card for metadata
+    ctx.fillStyle = '#0f172a'; // darker container
+    ctx.fillRect(0, 360, width, 152);
+
+    // Thin elegant separator
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(0, 359, width, 1);
+
+    // Draw current active destination name
+    ctx.fillStyle = '#64748b';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText("MANZILGACHA YO'L:", width / 2, 388);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 18.5px sans-serif';
+    ctx.fillText(data.destinationName.toUpperCase(), width / 2, 415);
+
+    // Draw eta and distance remaining
+    ctx.fillStyle = '#10b981'; // Green duration
+    ctx.font = 'bold 24px sans-serif';
+    
+    // Estimate clock time
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + data.etaMinutes);
+    const clockTime = now.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
+    
+    ctx.fillText(`${data.etaMinutes} daqiqa (${clockTime})`, width / 2, 458);
+
+    ctx.fillStyle = '#475569';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`Masofa: ${data.distanceText}`, width / 2, 490);
+  };
+
+  const startPipMode = async () => {
+    if (!('pictureInPictureEnabled' in document)) {
+      showToast("Xavfsiz brauzeringiz Rasm-ichida-rasm (PiP) rejasini qo'llab-quvvatlamaydi.", "error");
+      return;
+    }
+    
+    try {
+      const canvas = pipCanvasRef.current;
+      const video = pipVideoRef.current;
+      if (!canvas || !video) {
+        showToast("PiP rejasini tayyorlashda ichki xato", "error");
+        return;
+      }
+      
+      // Paint first frame so it is not blank!
+      const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
+      const nextPoint = selectedLocations[nextIndex];
+      let distanceTextVal = "0 m";
+      if (userLocation && nextPoint) {
+        const dKm = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
+        distanceTextVal = dKm < 1 ? `${(dKm * 1000).toFixed(0)} m` : `${dKm.toFixed(1)} km`;
+      }
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        drawPipFrame(ctx, 512, 512, {
+          turnDistanceText: distanceTextVal,
+          turnInstruction: nextPoint ? `Keyingi obyekt: ${nextPoint.name}` : "To'g'riga harakatlaning",
+          turnModifier: "straight",
+          turnType: "depart",
+          nextTurnTypeAfterThis: "",
+          etaMinutes: Math.ceil(selectedLocations.length * 2),
+          distanceText: distanceTextVal,
+          destinationName: nextPoint ? nextPoint.name : "Manzil"
+        });
+      }
+      
+      // Capture stream at 10 FPS
+      let stream;
+      if ((canvas as any).captureStream) {
+        stream = (canvas as any).captureStream(10);
+      } else if ((canvas as any).mozCaptureStream) {
+        stream = (canvas as any).mozCaptureStream(10);
+      } else {
+        showToast("Video oqimini olish imkoni bo'lmadi", "error");
+        return;
+      }
+      
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      
+      await video.play();
+      await video.requestPictureInPicture();
+      setIsPipActive(true);
+      showToast("Suzuvchi oyna (PiP) faollashtirildi! Endi bosh ekranda ham navigatsiya ko'rinib turadi.", "success");
+      
+      // Listen for when pip exits natively
+      video.addEventListener('leavepictureinpicture', () => {
+        setIsPipActive(false);
+      }, { once: true });
+    } catch (e: any) {
+      console.error("Picture-in-picture failed:", e);
+      showToast("Rasm-ichida-rasm rejasini ochishda xato: " + (e.message || ""), "error");
+    }
+  };
+  
+  const stopPipMode = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      }
+      setIsPipActive(false);
+    } catch (e) {
+      console.error("Failed to stop PiP:", e);
+    }
+  };
+  
+  const togglePipSupport = () => {
+    if (isPipActive) {
+      stopPipMode();
+    } else {
+      startPipMode();
+    }
+  };
+
   const getGoogleMapsUrl = (locationsList: any[]) => {
     if (!locationsList || locationsList.length < 2) return '';
     const origin = `${locationsList[0].lat},${locationsList[0].lng}`;
@@ -218,7 +516,7 @@ export default function MapComponent() {
     try {
       const isNavActive = localStorage.getItem('mmtb_is_navigation_active') === 'true';
       if (isNavActive) {
-        return 'yandex';
+        return 'google';
       }
       const cached = localStorage.getItem('mmtb_map_source');
       return (cached as any) || 'google';
@@ -334,6 +632,91 @@ export default function MapComponent() {
       return 60;
     }
   });
+
+  // Synchronize canvas painting when navigation state or steps update
+  useEffect(() => {
+    if (!isNavigationActive || selectedLocations.length < 2) return;
+    
+    const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
+    const nextPoint = selectedLocations[nextIndex];
+    if (!nextPoint) return;
+
+    let distanceTextVal = "GPS kutilmoqda...";
+    let calculatedDistanceKm = 0;
+    if (userLocation) {
+      calculatedDistanceKm = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
+      if (calculatedDistanceKm < 1) {
+        distanceTextVal = `${(calculatedDistanceKm * 1000).toFixed(0)} m`;
+      } else {
+        distanceTextVal = `${calculatedDistanceKm.toFixed(1)} km`;
+      }
+    }
+
+    const etaMinutesVal = calculatedDistanceKm ? Math.max(1, Math.round(calculatedDistanceKm * 2)) : 0;
+    const upcomingManeuver = getUpcomingManeuver(userLocation, routeSteps);
+
+    let turnDistanceText = "";
+    let turnInstruction = "To'g'riga harakatlaning";
+    let turnModifier = "straight";
+    let turnType = "depart";
+    let nextTurnTypeAfterThis = "";
+
+    if (upcomingManeuver) {
+      const m = upcomingManeuver.step.maneuver;
+      turnModifier = m.modifier || "straight";
+      turnType = m.type || "turn";
+      
+      if (upcomingManeuver.distance < 1000) {
+        turnDistanceText = `${Math.round(upcomingManeuver.distance)} m`;
+      } else {
+        turnDistanceText = `${(upcomingManeuver.distance / 1000).toFixed(1)} km`;
+      }
+      
+      if (turnType === 'arrive') {
+        turnInstruction = "Manzilgacha ketmoqdasiz";
+      } else {
+        const modLabel = 
+          turnModifier === 'left' ? "Chapga buriling" :
+          turnModifier === 'right' ? "O'ngga buriling" :
+          turnModifier === 'slight left' ? "Chapga salgina buriling" :
+          turnModifier === 'slight right' ? "O'ngga salgina buriling" :
+          turnModifier === 'sharp left' ? "Chapga keskin buriling" :
+          turnModifier === 'sharp right' ? "O'ngga keskin buriling" :
+          turnModifier === 'uturn' || turnModifier === 'u-turn' ? "Orqaga qayrilish" :
+          "To'g'riga harakatlaning";
+          
+        const streetName = upcomingManeuver.step.name ? ` (${upcomingManeuver.step.name} ko'chasiga)` : "";
+        turnInstruction = `${modLabel}${streetName}`;
+      }
+      
+      const nextStep = routeSteps[upcomingManeuver.index + 1];
+      if (nextStep && nextStep.maneuver) {
+        const nextMod = nextStep.maneuver.modifier;
+        nextTurnTypeAfterThis = nextMod === 'left' ? "Chapga kirish" : nextMod === 'right' ? "O'ngga kirish" : "To'g'ri yo'l";
+      }
+    } else {
+      turnDistanceText = distanceTextVal;
+      turnInstruction = `Keyingi ob'ekt: ${nextPoint.name}`;
+      turnModifier = "straight";
+    }
+
+    const canvas = pipCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        drawPipFrame(ctx, 512, 512, {
+          turnDistanceText,
+          turnInstruction,
+          turnModifier,
+          turnType,
+          nextTurnTypeAfterThis,
+          etaMinutes: etaMinutesVal,
+          distanceText: distanceTextVal,
+          destinationName: nextPoint.name
+        });
+      }
+    }
+  }, [isNavigationActive, navigationStepIndex, selectedLocations, userLocation, routeSteps, isRoundtrip]);
 
   // Active Geolocation watcher for HUD Navigation mode
   useEffect(() => {
@@ -518,8 +901,8 @@ export default function MapComponent() {
   useEffect(() => {
     if (isNavigationActive !== prevNavigationActive.current) {
       if (isNavigationActive) {
-        setMapSource('yandex');
-        showToast("Navigatsiya rejimi boshlandi. Yandex xaritasi faollashtirildi.", "info");
+        setMapSource('google');
+        showToast("Navigatsiya rejimi boshlandi. Google xaritasi faollashtirildi.", "info");
       } else {
         setMapSource('google');
         showToast("Navigatsiya rejimi tugatildi. Google xaritasi faollashtirildi.", "info");
@@ -1382,6 +1765,153 @@ export default function MapComponent() {
   useEffect(() => {
     fetchLocations();
     fetchBoundary();
+
+    // Parse URL for automated routing from Telegram Bot or external links
+    const checkAndLoadUrlRoute = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const routeParam = urlParams.get('route');
+      
+      if (routeParam) {
+        setIsCalculating(true);
+        try {
+          const pointStrings = routeParam.split(';');
+          const parsedLocs: Location[] = [];
+          
+          pointStrings.forEach((pointStr, idx) => {
+            const parts = pointStr.trim().split(',');
+            if (parts.length >= 3) {
+              const lng = parseFloat(parts[parts.length - 1]);
+              const lat = parseFloat(parts[parts.length - 2]);
+              const name = parts.slice(0, parts.length - 2).join(',').trim();
+              if (!isNaN(lat) && !isNaN(lng)) {
+                parsedLocs.push({
+                  id: `url-loaded-${idx}-${Date.now()}`,
+                  name: decodeURIComponent(name) || `Nuqta ${idx + 1}`,
+                  type: 'custom',
+                  lat,
+                  lng
+                });
+              }
+            } else if (parts.length === 2) {
+              const lat = parseFloat(parts[0]);
+              const lng = parseFloat(parts[1]);
+              if (!isNaN(lat) && !isNaN(lng)) {
+                parsedLocs.push({
+                  id: `url-loaded-${idx}-${Date.now()}`,
+                  name: `Nuqta ${idx + 1}`,
+                  type: 'custom',
+                  lat,
+                  lng
+                });
+              }
+            }
+          });
+          
+          if (parsedLocs.length >= 2) {
+            setSelectedLocations(parsedLocs);
+            
+            // Check flags
+            const shouldOptimize = urlParams.get('optimize') === 'true' || urlParams.get('opt') === '1';
+            const shouldAutostart = urlParams.get('nav') === '1' || urlParams.get('autostart') === 'true' || urlParams.get('start') === '1';
+            const rtParam = urlParams.get('roundtrip') === 'true' || urlParams.get('rt') === 'true' || urlParams.get('rt') === '1';
+            
+            if (rtParam) {
+              setIsRoundtrip(true);
+            }
+            
+            showToast(`${parsedLocs.length} ta manzil botdan yuklandi. Marshrut hisoblanmoqda...`, "info");
+            
+            // Build geometry directly so user doesn't wait for state updates
+            const isRoundtripVal = rtParam || isRoundtrip;
+            const tripParams = `?roundtrip=${isRoundtripVal}&source=first&overview=full&geometries=geojson&steps=true`;
+            const coordsStr = parsedLocs.map(loc => `${loc.lng},${loc.lat}`).join(';');
+            
+            let res, data;
+            if (shouldOptimize) {
+              res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}${tripParams}`);
+              data = await res.json();
+            } else {
+              // Direct route in specified order
+              res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson&steps=true`);
+              data = await res.json();
+            }
+            
+            const mainRouteOrTrip = shouldOptimize ? (data.trips && data.trips[0]) : (data.routes && data.routes[0]);
+            
+            if (data.code === 'Ok' && mainRouteOrTrip) {
+              const routeCoords = mainRouteOrTrip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+              setRouteGeometry(routeCoords);
+              
+              // Extract steps
+              const allSteps: any[] = [];
+              if (mainRouteOrTrip.legs) {
+                mainRouteOrTrip.legs.forEach((leg: any, legIdx: number) => {
+                  if (leg.steps) {
+                    leg.steps.forEach((step: any) => {
+                      allSteps.push({
+                        ...step,
+                        legIndex: legIdx,
+                        targetLabel: parsedLocs[legIdx + 1]?.name || ""
+                      });
+                    });
+                  }
+                });
+              }
+              setRouteSteps(allSteps);
+              
+              let orderedLocations = parsedLocs;
+              if (shouldOptimize && data.waypoints) {
+                const reordered = new Array(parsedLocs.length);
+                data.waypoints.forEach((wp: any, i: number) => {
+                  reordered[wp.waypoint_index] = parsedLocs[i];
+                });
+                setSelectedLocations(reordered);
+                orderedLocations = reordered;
+              }
+              
+              const stats = {
+                distance: mainRouteOrTrip.distance,
+                duration: mainRouteOrTrip.duration,
+                routes: [{
+                  distance: mainRouteOrTrip.distance,
+                  duration: mainRouteOrTrip.duration,
+                  locations: orderedLocations,
+                  color: '#3b82f6'
+                }]
+              };
+              
+              setRouteStats(stats);
+              setOptimizedRouteDistance(mainRouteOrTrip.distance);
+              saveRecentRouteSearch(orderedLocations);
+              
+              // Auto-center map to the first point or user location
+              if (mapRef.current && routeCoords.length > 0) {
+                mapRef.current.setView(routeCoords[0], 13);
+              }
+              
+              if (shouldAutostart) {
+                setIsNavigationActive(true);
+                setMapSource('google');
+                setIsAutoCenter(true);
+                setNavigationStepIndex(1); // Start from first step
+                showToast("Avtomatik navigatsiya faollashtirildi!", "success");
+              } else {
+                showToast("Marshrut muvaffaqiyatli tayyorlandi!", "success");
+              }
+            } else {
+              showToast("Marshrutni hisoblashda muammo yuz berdi", "error");
+            }
+          }
+        } catch (e) {
+          console.error("URL routing parsed load error:", e);
+          showToast("Havoladagi ma'lumotlarni o'qishda xatolik", "error");
+        } finally {
+          setIsCalculating(false);
+        }
+      }
+    };
+    
+    checkAndLoadUrlRoute();
   }, []);
 
   useEffect(() => {
@@ -1821,6 +2351,12 @@ export default function MapComponent() {
   return (
     <div className="w-full h-full relative font-sans text-slate-900 bg-[#f8fafc] overflow-hidden print:overflow-visible print:bg-white print:p-8 print:h-auto print:-m-8">
       
+      {/* Hidden elements for Picture-in-Picture navigation */}
+      <div style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: -1 }}>
+        <canvas ref={pipCanvasRef} width={512} height={512} style={{ display: 'block', width: '512px', height: '512px' }} />
+        <video ref={pipVideoRef} muted playsInline style={{ display: 'block', width: '1px', height: '1px' }} />
+      </div>
+      
       {/* Print Document Header */}
       <div className="hidden print:block text-center mb-8 border-b-2 border-slate-900 pb-4 shrink-0 mt-8">
         <h1 className="text-xl font-black uppercase tracking-widest text-slate-900 mb-1">O'zbekiston Respublikasi, Maktabgacha va maktab ta'limi vazirligi</h1>
@@ -2077,31 +2613,84 @@ export default function MapComponent() {
         return (
           <div className="absolute inset-0 pointer-events-none z-[999] flex flex-col justify-between p-3 md:p-4 font-sans select-none print:hidden">
             
-            {/* Top-Left Floating Panel: Yandex-Style Turn/Maneuver Directions */}
-            <div className="absolute top-4 left-4 z-[999] pointer-events-auto w-[240px] md:w-[270px] bg-[#1a65ec] text-white p-3.5 rounded-[24px] shadow-[0_16px_36px_rgba(26,101,236,0.35)] border border-[#4c8df6]/20 flex items-center space-x-3.5 animate-in slide-in-from-top-4 duration-300">
-              {/* Maneuver arrow icon */}
-              <div className="w-12 h-12 rounded-[16px] bg-[#0a56dd]/50 shrink-0 flex items-center justify-center">
-                {getManeuverIcon(turnModifier, turnType)}
-              </div>
-              
-              <div className="min-w-0 flex-1 leading-tight">
-                {/* Huge Distance Label */}
-                <div className="text-2xl md:text-3xl font-extrabold tracking-tighter text-white">
-                  {turnDistanceText || distanceText}
-                </div>
-                {/* Street/Action instruction */}
-                <p className="text-[11px] md:text-xs font-semibold text-white/90 truncate mt-0.5" title={turnInstruction}>
-                  {turnInstruction}
-                </p>
-                {/* Next visual helper */}
-                {nextTurnTypeAfterThis && (
-                  <p className="text-[9px] text-blue-100/80 font-bold flex items-center gap-1 mt-0.5 uppercase tracking-wider">
-                    <span>Keyingi:</span>
-                    <span className="truncate">{nextTurnTypeAfterThis}</span>
-                  </p>
-                )}
-              </div>
-            </div>
+            {/* Top-Left Floating Panel: Drag-to-dismiss & Closable interactive HUD */}
+            <AnimatePresence>
+              {isFloatingHudVisible ? (
+                <motion.div
+                  drag
+                  dragMomentum={true}
+                  dragTransition={{ bounceStiffness: 400, bounceDamping: 20 }}
+                  onDragEnd={(e, info) => {
+                    const dragDist = Math.sqrt(info.offset.x * info.offset.x + info.offset.y * info.offset.y);
+                    if (dragDist > 185) {
+                      setIsFloatingHudVisible(false);
+                      showToast("Yo'nalish paneli chetga surib berkitildi. Qayta tiklash uchun burchakdagi xarita belgisini bosing.", "info");
+                    }
+                  }}
+                  onClick={() => setShowHudCloseBtn(prev => !prev)}
+                  initial={{ opacity: 0, scale: 0.9, y: -20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  whileDrag={{ scale: 1.05, cursor: "grabbing", boxShadow: "0px 25px 50px rgba(0,0,0,0.5)" }}
+                  className="absolute top-4 left-4 z-[999] pointer-events-auto w-[240px] md:w-[270px] bg-[#1a65ec] text-white p-3.5 rounded-[24px] shadow-[0_16px_36px_rgba(26,101,236,0.35)] border border-[#4c8df6]/20 flex items-center space-x-3.5 select-none"
+                  style={{ touchAction: 'none' }}
+                >
+                  {/* Close X overlay button inside card */}
+                  {showHudCloseBtn && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsFloatingHudVisible(false);
+                      }}
+                      className="absolute -top-1.5 -right-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-full p-1.5 shadow-xl transition-all cursor-pointer z-50 border border-white flex items-center justify-center"
+                      title="Paneli yopish"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+
+                  {/* Maneuver arrow icon */}
+                  <div className="w-12 h-12 rounded-[16px] bg-[#0a56dd]/50 shrink-0 flex items-center justify-center">
+                    {getManeuverIcon(turnModifier, turnType)}
+                  </div>
+                  
+                  <div className="min-w-0 flex-1 leading-tight pointer-events-none">
+                    {/* Huge Distance Label */}
+                    <div className="text-2xl md:text-3xl font-extrabold tracking-tighter text-white">
+                      {turnDistanceText || distanceText}
+                    </div>
+                    {/* Street/Action instruction */}
+                    <p className="text-[11px] md:text-xs font-semibold text-white/90 truncate mt-0.5" title={turnInstruction}>
+                      {turnInstruction}
+                    </p>
+                    {/* Next visual helper */}
+                    {nextTurnTypeAfterThis && (
+                      <p className="text-[9px] text-blue-100/80 font-bold flex items-center gap-1 mt-0.5 uppercase tracking-wider">
+                        <span>Keyingi:</span>
+                        <span className="truncate">{nextTurnTypeAfterThis}</span>
+                      </p>
+                    )}
+                  </div>
+                </motion.div>
+              ) : (
+                /* Small float indicator to restore if dismissed */
+                <motion.button
+                  key="restore-hud"
+                  initial={{ opacity: 0, scale: 0.6 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  type="button"
+                  onClick={() => {
+                    setIsFloatingHudVisible(true);
+                    setShowHudCloseBtn(false);
+                  }}
+                  className="absolute top-4 left-4 z-[999] pointer-events-auto w-12 h-12 rounded-full bg-blue-600 border border-blue-400 text-white flex items-center justify-center shadow-lg hover:bg-blue-700 transition-all cursor-pointer hover:scale-105 active:scale-95"
+                  title="Yo'nalish ko'rsatgichini qayta ochish"
+                >
+                  <Navigation className="w-5.5 h-5.5 text-white animate-pulse" />
+                </motion.button>
+              )}
+            </AnimatePresence>
 
             {/* Bottom HUD: Yandex Navigator style sleek progress line and indicators */}
             <div className="mt-auto pointer-events-auto w-full max-w-sm mx-auto flex flex-col space-y-2">
@@ -2138,6 +2727,19 @@ export default function MapComponent() {
                         {userLocation ? `${etaMinutes} daq` : "Obyektgacha..."}
                       </span>
                     </div>
+
+                    {/* Floating PiP Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePipSupport();
+                      }}
+                      className={`p-1 text-slate-400 hover:text-blue-400 bg-slate-800/30 hover:bg-blue-950/40 rounded-lg transition-all shrink-0 cursor-pointer mr-1 ${isPipActive ? 'bg-blue-600/60 text-white animate-pulse' : ''}`}
+                      title={isPipActive ? "Suzuvchi oynani o'chirish" : "Suzuvchi ekran (PiP)"}
+                    >
+                      <Smartphone className={`w-4.5 h-4.5 shrink-0 ${isPipActive ? 'text-white' : 'text-blue-400'}`} />
+                    </button>
 
                     {/* Quick Exit X Button */}
                     <button
@@ -2248,6 +2850,24 @@ export default function MapComponent() {
                       >
                         <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
                         <span>Tugatish</span>
+                      </button>
+
+                      {/* Floating PiP Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePipSupport();
+                        }}
+                        className={`p-1 px-2.5 text-[10px] font-extrabold rounded-lg border flex items-center space-x-1 transition-all active:scale-95 cursor-pointer shrink-0 ${
+                          isPipActive 
+                            ? 'bg-blue-600 border-blue-500 text-white animate-pulse' 
+                            : 'bg-slate-900 hover:bg-slate-850 border-slate-800 text-blue-400 hover:text-blue-300'
+                        }`}
+                        title="Suzuvchi HUD oyna (PiP)"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                        <span>{isPipActive ? "PiP Yopish" : "Suzuvchi"}</span>
                       </button>
 
                       <button
