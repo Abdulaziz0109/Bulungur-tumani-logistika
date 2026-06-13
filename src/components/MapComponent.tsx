@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, Volume2, QrCode, Smartphone } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, QrCode, Smartphone } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -283,6 +283,17 @@ export default function MapComponent() {
   const [hideUnselected, setHideUnselected] = useState(false);
   const [isBottomHudExpanded, setIsBottomHudExpanded] = useState<boolean>(false);
 
+  // Recent route searches (last 5 searches)
+  const [recentRouteSearches, setRecentRouteSearches] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_recent_searches');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showRecentSearches, setShowRecentSearches] = useState<boolean>(false);
+
   const [isNavigationActive, setIsNavigationActive] = useState<boolean>(() => {
     try {
       const cached = localStorage.getItem('mmtb_is_navigation_active');
@@ -358,12 +369,6 @@ export default function MapComponent() {
     };
   }, [isNavigationActive, isAutoCenter]);
 
-  // Voice trigger for HUD navigation
-  useEffect(() => {
-    if (isNavigationActive) {
-      speakCurrentRouteStep(navigationStepIndex);
-    }
-  }, [isNavigationActive, navigationStepIndex]);
 
   // QR code states
   const [qrMapSelected, setQrMapSelected] = useState<'google' | 'yandex'>('google');
@@ -605,36 +610,6 @@ export default function MapComponent() {
     };
   };
 
-  const speakCurrentRouteStep = (stepIdx: number) => {
-    if (selectedLocations.length < 2) return;
-    
-    let target = null;
-    let text = "";
-    
-    if (isRoundtrip && stepIdx === selectedLocations.length) {
-      target = selectedLocations[0];
-      text = `Yakuniy manzilingiz: ${target.name}. Bu boshlang'ich nuqta. Yo'lga chiqing!`;
-    } else {
-      const idx = stepIdx >= selectedLocations.length ? selectedLocations.length - 1 : stepIdx;
-      target = selectedLocations[idx];
-      text = `Keyingi manzilingiz: ${target.name}. Marhamat, ushbu ob'ektga qarab yo'naling!`;
-    }
-
-    if (target) {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'uz-UZ';
-        const voices = window.speechSynthesis.getVoices();
-        const ruVoice = voices.find(v => v.lang.toLowerCase().includes('ru'));
-        const uzVoice = voices.find(v => v.lang.toLowerCase().includes('uz'));
-        if (uzVoice) utterance.voice = uzVoice;
-        else if (ruVoice) utterance.voice = ruVoice;
-        utterance.rate = 0.95;
-        window.speechSynthesis.speak(utterance);
-      }
-    }
-  };
 
   const handleSearch = (q: string) => {
     setSearchQuery(q);
@@ -1230,6 +1205,119 @@ export default function MapComponent() {
     }
   };
 
+  const saveRecentRouteSearch = (locations: Location[]) => {
+    if (locations.length < 2) return;
+    try {
+      const cached = localStorage.getItem('mmtb_recent_searches');
+      let recent: any[] = cached ? JSON.parse(cached) : [];
+      
+      const routeId = locations.map(l => l.id).join('-');
+      
+      // Remove standard duplicates
+      recent = recent.filter(r => r.id !== routeId);
+      
+      const names = locations.map(l => l.name);
+      let shortName = `${names[0]} ➔ ${names[names.length - 1]}`;
+      if (names.length > 2) {
+        shortName += ` (+${names.length - 2})`;
+      }
+      
+      const newItem = {
+        id: routeId,
+        timestamp: Date.now(),
+        name: shortName,
+        locations: locations,
+        isRoundtrip: isRoundtrip
+      };
+      
+      recent.unshift(newItem);
+      recent = recent.slice(0, 5);
+      
+      localStorage.setItem('mmtb_recent_searches', JSON.stringify(recent));
+      setRecentRouteSearches(recent);
+    } catch (e) {
+      console.error("Failed to save recent route search:", e);
+    }
+  };
+
+  const handleLoadRecentSearch = async (searchItem: any) => {
+    setSelectedLocations(searchItem.locations);
+    setIsRoundtrip(searchItem.isRoundtrip || false);
+    
+    if (searchItem.locations && searchItem.locations.length >= 2) {
+      setIsCalculating(true);
+      setRouteGeometry(null);
+      setMultiRouteGeometries(null);
+      try {
+        const tripParams = `?roundtrip=${searchItem.isRoundtrip || false}&source=first&overview=full&geometries=geojson&steps=true`;
+        const coordsStr = searchItem.locations.map((loc: any) => `${loc.lng},${loc.lat}`).join(';');
+        const res = await fetch(`https://router.project-osrm.org/trip/v1/driving/${coordsStr}${tripParams}`);
+        const data = await res.json();
+        
+        if (data.code === 'Ok' && data.trips && data.trips.length > 0) {
+          const trip = data.trips[0];
+          const routeCoords = trip.geometry.coordinates.map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+          setRouteGeometry(routeCoords);
+          
+          // Extract steps
+          const allSteps: any[] = [];
+          if (trip.legs) {
+            trip.legs.forEach((leg: any, legIdx: number) => {
+              if (leg.steps) {
+                leg.steps.forEach((step: any) => {
+                  allSteps.push({
+                    ...step,
+                    legIndex: legIdx,
+                    targetLabel: searchItem.locations[legIdx + 1]?.name || ""
+                  });
+                });
+              }
+            });
+          }
+          setRouteSteps(allSteps);
+          
+          setRouteStats({
+            distance: trip.distance,
+            duration: trip.duration,
+            routes: [{
+              distance: trip.distance,
+              duration: trip.duration,
+              locations: searchItem.locations,
+              color: '#3b82f6'
+            }]
+          });
+          setOptimizedRouteDistance(trip.distance);
+          showToast(`Qidirilgan marshrut qayta yuklandi va xaritaga chizildi!`, "success");
+        } else {
+          showToast(`Marshrut yuklandi, lek chizib bo'lmadi`, "info");
+        }
+      } catch (err) {
+        console.error("OSRM draw error: ", err);
+        showToast(`Marshrut yuklashda muammo bo'ldi`, "error");
+      } finally {
+        setIsCalculating(false);
+      }
+    } else {
+      setRouteGeometry(null);
+      setRouteStats(null);
+      showToast(`Marshrut yuklandi!`, "success");
+    }
+  };
+
+  const handleDeleteRecentSearch = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const cached = localStorage.getItem('mmtb_recent_searches');
+      let recent: any[] = cached ? JSON.parse(cached) : [];
+      recent = recent.filter(r => r.id !== id);
+      localStorage.setItem('mmtb_recent_searches', JSON.stringify(recent));
+      setRecentRouteSearches(recent);
+      showToast("Qidiruv tarixi o'chirildi", "info");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchSavedRoutes();
   }, [currentUser]);
@@ -1648,6 +1736,7 @@ export default function MapComponent() {
           setRouteStats(stats);
           setOptimizedRouteDistance(trip.distance);
           autoSaveCalculatedRoute(orderedLocations, stats);
+          saveRecentRouteSearch(orderedLocations);
           setIsRouteStatsExpanded(true);
           setTimeout(() => {
             setIsRouteStatsExpanded(false);
@@ -1715,6 +1804,7 @@ export default function MapComponent() {
         setRouteStats(stats);
         setOptimizedRouteDistance(totalDist);
         autoSaveCalculatedRoute(selectedLocations, stats);
+        saveRecentRouteSearch(selectedLocations);
         setIsRouteStatsExpanded(true);
         setTimeout(() => {
           setIsRouteStatsExpanded(false);
@@ -2011,19 +2101,6 @@ export default function MapComponent() {
                   </p>
                 )}
               </div>
-
-              {/* TTS Sound Helper button */}
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  speakCurrentRouteStep(navigationStepIndex);
-                }}
-                className="w-8.5 h-8.5 bg-white/10 hover:bg-white/20 text-white rounded-[14px] border border-white/10 transition-all flex items-center justify-center active:scale-90 cursor-pointer shrink-0"
-                title="Ovozli yordamchini eshitish"
-                type="button"
-              >
-                <Volume2 className="w-4.5 h-4.5" />
-              </button>
             </div>
 
             {/* Bottom HUD: Yandex Navigator style sleek progress line and indicators */}
@@ -3380,6 +3457,59 @@ export default function MapComponent() {
                           onClick={(e) => handleDeleteRoute(route.id, e)}
                           className="p-1 rounded-md bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shrink-0 cursor-pointer"
                           title="O'chirish"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Recent Searches Accordion/Collapsible */}
+            <div className="shrink-0">
+              <button 
+                onClick={() => setShowRecentSearches(!showRecentSearches)}
+                className="w-full flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition-all font-bold text-xs group cursor-pointer"
+              >
+                <div className="flex items-center space-x-2">
+                  <Clock className="w-4 h-4 text-slate-500 group-hover:text-indigo-600 transition-colors" />
+                  <span className="text-slate-700 font-bold">Yaqinda qidirilganlar</span>
+                  {recentRouteSearches.length > 0 && (
+                    <span className="px-1.5 py-0.5 bg-emerald-100 font-extrabold text-emerald-700 rounded text-[9px]">
+                      {recentRouteSearches.length}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-400 font-bold">
+                  {showRecentSearches ? "Yopish" : "Ko'rish"}
+                </span>
+              </button>
+              {showRecentSearches && (
+                <div className="mt-2 p-2 bg-slate-50/50 border border-slate-200 rounded-xl max-h-[180px] overflow-y-auto space-y-1.5 scrollbar-thin">
+                  {recentRouteSearches.length === 0 ? (
+                    <div className="text-center py-6 text-xs text-slate-400 font-semibold font-sans">
+                      Hozircha yaqinda qidirilgan marshrutlar yo'q
+                    </div>
+                  ) : (
+                    recentRouteSearches.map((search) => (
+                      <div 
+                        key={search.id}
+                        onClick={() => handleLoadRecentSearch(search)}
+                        className="group cursor-pointer p-2 bg-white hover:bg-emerald-50/20 border border-slate-100 hover:border-emerald-100 rounded-lg flex items-center justify-between transition-all"
+                      >
+                        <div className="flex flex-col space-y-0.5 overflow-hidden pr-2">
+                          <span className="font-bold text-xs text-slate-800 truncate" title={search.name}>{search.name}</span>
+                          <div className="flex items-center space-x-1.5 text-[9px] text-slate-500 font-semibold font-mono">
+                            <span>📍 {search.locations?.length || 0} manzil</span>
+                            {search.isRoundtrip && <span className="text-amber-600 bg-amber-50 px-1 rounded-sm text-[8px] font-bold">Aylanma</span>}
+                          </div>
+                        </div>
+                        <button 
+                          onClick={(e) => handleDeleteRecentSearch(search.id, e)}
+                          className="p-1 rounded-md bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center shrink-0 cursor-pointer"
+                          title="Tarixdan o'chirish"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
