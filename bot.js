@@ -1,7 +1,7 @@
 import express from 'express';
 import { Telegraf } from 'telegraf';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import { GoogleGenAI, Type } from '@google/genai';
 import fs from 'fs';
 import * as dotenv from 'dotenv';
@@ -359,24 +359,104 @@ Vazifanglaringiz:
             return R * c; // Distance in km
           };
 
+          const getDrivingRouteDetails = async (locations) => {
+            try {
+              const coordsList = locations.map(loc => `${loc.lng},${loc.lat}`).join(';');
+              const url = `https://router.project-osrm.org/route/v1/driving/${coordsList}?overview=false`;
+              const res = await fetch(url);
+              const data = await res.json();
+              if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+                const route = data.routes[0];
+                const segments = route.legs ? route.legs.map(leg => leg.distance / 1000) : [];
+                return {
+                  totalDist: route.distance / 1000,
+                  totalDuration: route.duration / 60,
+                  segments
+                };
+              }
+            } catch (err) {
+              console.error("OSRM call failed, falling back:", err);
+            }
+            return null;
+          };
+
+          // Route cache validation and generation
+          const cacheDocId = matchedIds.join('_');
+          const cacheRef = doc(db, 'route_cache', cacheDocId);
+          let roadDetails = null;
+          try {
+            const cacheSnap = await getDoc(cacheRef);
+            if (cacheSnap.exists()) {
+              const cacheData = cacheSnap.data();
+              roadDetails = {
+                totalDist: cacheData.totalDist,
+                totalDuration: cacheData.totalDuration,
+                segments: cacheData.segments || []
+              };
+              console.log("⚡ Cached route loaded for:", cacheDocId);
+            }
+          } catch (cacheErr) {
+            console.error("Cache read error:", cacheErr);
+          }
+
+          if (!roadDetails) {
+            roadDetails = await getDrivingRouteDetails(matchedLocations);
+            if (roadDetails) {
+              try {
+                await setDoc(cacheRef, {
+                  ids: matchedIds,
+                  totalDist: roadDetails.totalDist,
+                  totalDuration: roadDetails.totalDuration,
+                  segments: roadDetails.segments || [],
+                  createdAt: new Date().toISOString()
+                });
+                console.log("💾 Saved new route to cache:", cacheDocId);
+              } catch (cacheWriteErr) {
+                console.error("Cache write error:", cacheWriteErr);
+              }
+            }
+          }
+
           if (matchedLocations.length === 2) {
             const loc1 = matchedLocations[0];
             const loc2 = matchedLocations[1];
-            const dKm = computeHaversine(loc1.lat, loc1.lng, loc2.lat, loc2.lng);
+            const straightKm = computeHaversine(loc1.lat, loc1.lng, loc2.lat, loc2.lng);
             
-            finalReplyText += `\n\n📏 Koordinatali aniq masofa:\n• ${loc1.name} ➡️ ${loc2.name} oralig'i to'g'ri chiziq bo'ylab taxminan: ${dKm.toFixed(2)} km.`;
-          } else {
-            let totalD = 0;
-            let chainText = `\n\n📏 Zanjirli masofa hisoboti:`;
-            for (let i = 0; i < matchedLocations.length - 1; i++) {
-              const l1 = matchedLocations[i];
-              const l2 = matchedLocations[i+1];
-              const dist = computeHaversine(l1.lat, l1.lng, l2.lat, l2.lng);
-              totalD += dist;
-              chainText += `\n• ${i+1}. ${l1.name} ➡️ ${l2.name}: ${dist.toFixed(2)} km`;
+            if (roadDetails) {
+              finalReplyText = `📐 **${loc1.name}** va **${loc2.name}** masofasi:\n\n` +
+                                `🚗 Haqiqiy avtomobil yo'li orqali: **${roadDetails.totalDist.toFixed(2)} km**\n` +
+                                `⏱ Taxminiy yo'l vaqti: **${Math.round(roadDetails.totalDuration)} minut**\n` +
+                                `📐 Havo liniyasi (to'g'ri chiziq) bo'ylab: **${straightKm.toFixed(2)} km**`;
+            } else {
+              finalReplyText = `📐 **${loc1.name}** va **${loc2.name}** masofasi:\n\n` +
+                                `📐 Havo liniyasi (to'g'ri chiziq) bo'ylab: **${straightKm.toFixed(2)} km**\n` +
+                                `⚠️ (Avtomobil transporti yo'li hisoblagichi vaqtinchalik ishlamayapti)`;
             }
-            chainText += `\n\n🏁 Jami umumiy chiziqli masofa: ${totalD.toFixed(2)} km`;
-            finalReplyText += chainText;
+          } else {
+            if (roadDetails) {
+              let chainText = `📐 **Muassasalar orasidagi zanjirli masofalar (Avtomobil yo'li bo'yicha):**\n\n`;
+              for (let i = 0; i < matchedLocations.length - 1; i++) {
+                const l1 = matchedLocations[i];
+                const l2 = matchedLocations[i+1];
+                const segRoadKm = (roadDetails.segments && roadDetails.segments[i] !== undefined) ? roadDetails.segments[i] : computeHaversine(l1.lat, l1.lng, l2.lat, l2.lng);
+                chainText += `• **${l1.name} ➡️ ${l2.name}**: ${segRoadKm.toFixed(2)} km\n`;
+              }
+              chainText += `\n🚗 **Jami haqiqiy avtomobil yo'li: ${roadDetails.totalDist.toFixed(2)} km**\n`;
+              chainText += `⏱ **Jami taxminiy harakatlanish vaqti: ${Math.round(roadDetails.totalDuration)} minut**`;
+              finalReplyText = chainText;
+            } else {
+              let totalD = 0;
+              let chainText = `📐 **Muassasalar orasidagi zanjirli masofalar (To'g'ri chiziq bo'ylab):**\n\n`;
+              for (let i = 0; i < matchedLocations.length - 1; i++) {
+                const l1 = matchedLocations[i];
+                const l2 = matchedLocations[i+1];
+                const dist = computeHaversine(l1.lat, l1.lng, l2.lat, l2.lng);
+                totalD += dist;
+                chainText += `• **${l1.name} ➡️ ${l2.name}**: ${dist.toFixed(2)} km\n`;
+              }
+              chainText += `\n📐 Jami to'g'ri chiziqli masofa: **${totalD.toFixed(2)} km**`;
+              finalReplyText = chainText;
+            }
           }
 
           const yandexCoords = matchedLocations.map(loc => `~${loc.lat},${loc.lng}`).join('');
@@ -399,13 +479,6 @@ Vazifanglaringiz:
                ]]
             }
           });
-
-          // Show locations
-          for (let i = 0; i < Math.min(matchedLocations.length, 3); i++) {
-             const loc = matchedLocations[i];
-             await ctx.reply(`Belgilangan nuqta #${i+1}: ${loc.name}`);
-             await ctx.replyWithLocation(loc.lat, loc.lng);
-          }
 
         } else {
           await ctx.reply(finalReplyText, {
