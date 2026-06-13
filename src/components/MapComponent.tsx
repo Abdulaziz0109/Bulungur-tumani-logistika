@@ -571,6 +571,8 @@ export default function MapComponent() {
   const [isMapLocked, setIsMapLocked] = useState(false);
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [isPickingRoutePoint, setIsPickingRoutePoint] = useState(false);
+  const [clickedMarkerState, setClickedMarkerState] = useState<{ id: string; timestamp: number } | null>(null);
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // States for Radius Analysis
   const [isRadiusMode, setIsRadiusMode] = useState(false);
@@ -1061,12 +1063,34 @@ export default function MapComponent() {
   function LocationPicker() {
     const map = useMapEvents({
       dragstart() {
+        setClickedMarkerState(null);
+        if (closeTimeoutRef.current) {
+          clearTimeout(closeTimeoutRef.current);
+          closeTimeoutRef.current = null;
+        }
         map.closePopup();
       },
       movestart() {
+        setClickedMarkerState(null);
+        if (closeTimeoutRef.current) {
+          clearTimeout(closeTimeoutRef.current);
+          closeTimeoutRef.current = null;
+        }
         map.closePopup();
       },
+      popupclose() {
+        setClickedMarkerState(null);
+        if (closeTimeoutRef.current) {
+          clearTimeout(closeTimeoutRef.current);
+          closeTimeoutRef.current = null;
+        }
+      },
       click(e) {
+        setClickedMarkerState(null);
+        if (closeTimeoutRef.current) {
+          clearTimeout(closeTimeoutRef.current);
+          closeTimeoutRef.current = null;
+        }
         if (isPickingRoutePoint) {
            const customLocation: Location = {
              id: `custom-${Date.now()}`,
@@ -2371,7 +2395,7 @@ export default function MapComponent() {
               <MapIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[120px] md:max-w-none">
+              <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[125px] sm:max-w-none">
                 MMTB Logistika
               </h1>
               <div className="flex items-center text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
@@ -2380,6 +2404,49 @@ export default function MapComponent() {
               </div>
             </div>
           </div>
+
+          {/* Mobile version search bar located in the empty middle space */}
+          <div className="flex-1 md:hidden max-w-[170px] xs:max-w-[210px] sm:max-w-xs mx-1 sm:mx-3 relative">
+            <div className={`relative bg-slate-50 rounded-xl border border-slate-200/80 flex items-center px-2 py-1.5 transition-all ${isSearchFocused ? 'ring-2 ring-blue-500/20 border-blue-500 bg-white' : ''}`}>
+               <Search className="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" />
+               <input 
+                 type="text" 
+                 placeholder="Qidiruv..." 
+                 className="w-full bg-transparent outline-none text-[11px] font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                 value={searchQuery}
+                 onChange={(e) => handleSearch(e.target.value)}
+                 onFocus={() => setIsSearchFocused(true)}
+                 onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+               />
+               {searchQuery && (
+                  <button onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]);}} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded-full shrink-0"><X className="w-3 h-3"/></button>
+               )}
+            </div>
+            {/* Mobile Search Results */}
+            {isSearchFocused && searchResults.length > 0 && (
+              <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-[calc(100vw-32px)] xs:w-[250px] sm:w-[280px] mt-2 bg-white rounded-xl shadow-2xl border border-slate-100 overflow-hidden z-[510] animate-in fade-in slide-in-from-top-2">
+                {searchResults.map(res => (
+                  <button 
+                    key={res.id} 
+                    onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
+                    className="w-full text-left px-3 py-2 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col"
+                  >
+                    <span className="font-extrabold text-slate-850 text-[10px] sm:text-[11px] leading-snug">{res.name}</span>
+                    <div className="flex items-center space-x-1 mt-0.5">
+                      <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
+                      {res.mahalla && (
+                        <>
+                          <span className="w-0.5 h-0.5 rounded-full bg-slate-200"></span>
+                          <span className="text-[8px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="w-px h-6 md:h-8 bg-slate-200 mx-1 md:mx-2 shrink-0"></div>
           <div className="flex items-center space-x-1 md:space-x-2 overflow-x-auto hide-scrollbar">
             {!currentUser ? (
@@ -2415,7 +2482,7 @@ export default function MapComponent() {
 
       {/* Search Bar */}
       {!isNavigationActive && (
-        <div className="print:hidden absolute top-[76px] md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[94%] sm:w-[90%] sm:max-w-md transition-all">
+        <div className="print:hidden absolute hidden md:block md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[94%] sm:w-[90%] sm:max-w-md transition-all">
           <div className={`relative bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 flex items-center px-4 py-3 transition-colors ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
              <Search className="w-5 h-5 text-slate-400 mr-3" />
              <input 
@@ -3704,32 +3771,64 @@ export default function MapComponent() {
             eventHandlers={{ 
               click: (e) => { 
                 handleMarkerClick(loc);
+                setClickedMarkerState({ id: loc.id, timestamp: Date.now() });
+                if (closeTimeoutRef.current) {
+                  clearTimeout(closeTimeoutRef.current);
+                  closeTimeoutRef.current = null;
+                }
                 e.target.openPopup();
               },
               mouseover: (e) => {
+                if (closeTimeoutRef.current) {
+                  clearTimeout(closeTimeoutRef.current);
+                  closeTimeoutRef.current = null;
+                }
                 e.target.openPopup();
               },
               mouseout: (e) => {
-                if (editingLandmarkId !== loc.id) {
-                  e.target.closePopup();
+                if (editingLandmarkId === loc.id) return;
+                
+                if (clickedMarkerState && clickedMarkerState.id === loc.id) {
+                  return;
                 }
+                
+                closeTimeoutRef.current = setTimeout(() => {
+                  if (e.target && typeof e.target.closePopup === 'function') {
+                     e.target.closePopup();
+                  }
+                }, 400);
               }
             }}
             ref={(el) => { markerRefs.current[loc.id] = el; }}
           >
             <Popup offset={[0, -20]}>
-              <div className="font-sans text-center mt-0.5 max-w-[190px]">
+              <div 
+                className="font-sans text-center mt-0.5 max-w-[190px]"
+                onMouseEnter={() => {
+                  if (closeTimeoutRef.current) {
+                    clearTimeout(closeTimeoutRef.current);
+                    closeTimeoutRef.current = null;
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (clickedMarkerState && clickedMarkerState.id === loc.id) {
+                    return;
+                  }
+                  closeTimeoutRef.current = setTimeout(() => {
+                    if (markerRefs.current[loc.id]) {
+                      markerRefs.current[loc.id]?.closePopup();
+                    }
+                  }, 400);
+                }}
+              >
                 <h3 className="font-extrabold text-[12px] text-white leading-tight mb-1">{loc.name}</h3>
-                <div className="flex flex-wrap gap-1 justify-center mb-1.5">
-                  <span className="text-[8px] font-bold text-slate-300 capitalize bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5">
-                    {loc.type === 'dmtt' ? "Bog'cha (DMTT)" : loc.type === 'maktab' ? "Maktab" : "Tashkilot"}
-                  </span>
-                  {loc.mahalla && (
+                {loc.mahalla && (
+                  <div className="flex flex-wrap gap-1 justify-center mb-1.5">
                     <span className="text-[8px] font-bold text-blue-300 bg-blue-950/60 border border-blue-900/40 rounded px-1.5 py-0.5" title="Mahalla">
                       {loc.mahalla}
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
                 
                 <div className="text-[9px] text-slate-300 mb-1.5 px-1 text-left border-t border-b border-dashed border-slate-700/60 py-1 my-1">
                   <div className="flex justify-between items-center font-bold mb-0.5">
@@ -3790,9 +3889,9 @@ export default function MapComponent() {
                   <button 
                     onClick={(e) => { e.stopPropagation(); openEditModal(loc); }}
                     className="print:hidden w-full mt-1.5 py-1 text-[8px] font-bold text-amber-400 bg-amber-400/10 hover:bg-amber-400/25 border border-amber-400/20 rounded-lg transition-all cursor-pointer flex items-center justify-center"
-                    title="Joylashuv xatomi? To'g'irlash"
+                    title={role === 'admin' ? "Tuzatish (Admin)" : "Xato haqida xabar berish"}
                   >
-                    {role === 'admin' ? "To'g'irlash" : "To'g'irlash (Taklif)"}
+                    Joylashuv xatomi?
                   </button>
                 )}
               </div>
@@ -3807,16 +3906,53 @@ export default function MapComponent() {
             position={[loc.lat, loc.lng]} 
             icon={createDivIcon(loc.type, loc.name)}
             eventHandlers={{ 
+              click: (e) => {
+                setClickedMarkerState({ id: loc.id, timestamp: Date.now() });
+                if (closeTimeoutRef.current) {
+                  clearTimeout(closeTimeoutRef.current);
+                  closeTimeoutRef.current = null;
+                }
+                e.target.openPopup();
+              },
               mouseover: (e) => {
+                if (closeTimeoutRef.current) {
+                  clearTimeout(closeTimeoutRef.current);
+                  closeTimeoutRef.current = null;
+                }
                 e.target.openPopup();
               },
               mouseout: (e) => {
-                e.target.closePopup();
+                if (clickedMarkerState && clickedMarkerState.id === loc.id) {
+                  return;
+                }
+                closeTimeoutRef.current = setTimeout(() => {
+                  if (e.target && typeof e.target.closePopup === 'function') {
+                     e.target.closePopup();
+                  }
+                }, 400);
               }
             }}
           >
             <Popup offset={[0, -20]}>
-              <div className="font-sans text-center mt-0.5 max-w-[190px]">
+              <div 
+                className="font-sans text-center mt-0.5 max-w-[190px]"
+                onMouseEnter={() => {
+                  if (closeTimeoutRef.current) {
+                    clearTimeout(closeTimeoutRef.current);
+                    closeTimeoutRef.current = null;
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (clickedMarkerState && clickedMarkerState.id === loc.id) {
+                    return;
+                  }
+                  closeTimeoutRef.current = setTimeout(() => {
+                    if (markerRefs.current[loc.id]) {
+                      markerRefs.current[loc.id]?.closePopup();
+                    }
+                  }, 400);
+                }}
+              >
                 <h3 className="font-extrabold text-[12px] text-white leading-tight">{loc.name}</h3>
               </div>
             </Popup>
