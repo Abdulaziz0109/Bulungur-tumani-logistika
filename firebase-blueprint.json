@@ -58,6 +58,22 @@
         "createdAt": { "type": "string" }
       },
       "required": ["ids", "totalDist", "totalDuration", "segments"]
+    },
+    "report": {
+      "title": "Photo Report",
+      "description": "User submitted photo reports via Telegram bot",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "number" },
+        "userFullname": { "type": "string" },
+        "username": { "type": "string" },
+        "photoFileId": { "type": "string" },
+        "photoWidth": { "type": "number" },
+        "photoHeight": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "caption": { "type": "string" }
+      },
+      "required": ["userId", "userFullname", "photoFileId", "createdAt"]
     }
   },
   "firestore": {
@@ -76,6 +92,10 @@
     "/route_cache/{cacheId}": {
       "schema": "route_cache",
       "description": "Cached route distances and durations between locations"
+    },
+    "/reports/{reportId}": {
+      "schema": "report",
+      "description": "Collection of user photo reports"
     }
   }
 }

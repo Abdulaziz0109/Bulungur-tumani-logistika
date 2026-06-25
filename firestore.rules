@@ -45,6 +45,13 @@ service cloud.firestore {
              data.totalDuration is number &&
              data.segments is list;
     }
+    function isValidReport(data) {
+      return data.keys().hasAll(['userId', 'userFullname', 'photoFileId', 'createdAt']) &&
+             data.userId is number &&
+             data.userFullname is string && data.userFullname.size() > 0 && data.userFullname.size() <= 200 &&
+             data.photoFileId is string && data.photoFileId.size() > 0 && data.photoFileId.size() <= 200 &&
+             data.createdAt is string && data.createdAt.size() <= 50;
+    }
 
     match /locations/{locationId} {
       allow read: if isValidId(locationId);
@@ -86,6 +93,12 @@ service cloud.firestore {
     match /route_cache/{cacheId} {
       allow read: if isValidId(cacheId);
       allow create, update: if isValidId(cacheId) && isValidRouteCache(incoming());
+    }
+
+    match /reports/{reportId} {
+      allow read: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isValidId(reportId) && isValidReport(incoming());
     }
   }
 }

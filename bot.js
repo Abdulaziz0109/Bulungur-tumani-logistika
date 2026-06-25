@@ -52,8 +52,7 @@ if (hasValidToken && firebaseConfig) {
     return {
       keyboard: [
         [{ text: "🗺 To'liq xaritani ochish", web_app: { url: appUrl } }],
-        [{ text: "📊 Tuman statistikasi" }, { text: "📸 Hisobor yuborish (Report)" }],
-        [{ text: "ℹ️ Qo'llanma / Yordam" }]
+        [{ text: "📊 Tuman statistikasi" }, { text: "ℹ️ Qo'llanma / Yordam" }]
       ],
       resize_keyboard: true,
       persistent: true
@@ -100,8 +99,7 @@ if (hasValidToken && firebaseConfig) {
       "📖 *Bulung'ur MMTB xarita botidan foydalanish ko'rsatmasi:*\n\n" +
       "1️⃣ *Oddiy Qidiruv*: Muassasa raqami yoki nomini kiriting (Masalan: `15`, `sohibkor` yoki `12-maktab`). Bot sizga shu joyning tavsifi va xaritadagi punktini yuboradi.\n\n" +
       "2️⃣ *Ko'p manzilli optimallashtirish (AI)*: Bir nechta manzilga borishingiz kerak bo'lsa, xabarda barchasini yozing (Masalan: `15-maktab, 3-bog'cha va 9-maktab qayerda?`). Gemini AI ularni aniqlaydi va sizga eng tejamkor masofali *borish tartibini (optimallashgan ketma-ketlikni)* hamda Yandex/Google navigator havolasini taqdim etadi!\n\n" +
-      "3️⃣ *Telegram Web App*: `🗺 To'liq xaritani ochish` tugmasini bosib, siz ajoyib va tezkor live xarita interfeysini to'g'ridan-to'g'ri Telegramning ichida ochishingiz mumkin. Bu orqali alohida saytga o'tish zaruriyati qolmaydi!\n\n" +
-      "4️⃣ *Foto-Hisobotlar*: Tuman muassasalarida bajargan ishlaringiz yoki holat bo'yicha rasm yuborishingiz mumkin. Rasmlar darhol saqlanib, menejerlarga yetkaziladi.",
+      "3️⃣ *Telegram Web App*: `🗺 To'liq xaritani ochish` tugmasini bosib, siz ajoyib va tezkor live xarita interfeysini to'g'ridan-to'g'ri Telegramning ichida ochishingiz mumkin. Bu orqali alohida saytga o'tish zaruriyati qolmaydi!",
       { 
         parse_mode: 'Markdown',
         reply_markup: getMainMenu()
@@ -179,9 +177,6 @@ if (hasValidToken && firebaseConfig) {
     // Quick handlers for Reply Keyboard
     if (userText === "📊 Tuman statistikasi") {
       return showStat(ctx);
-    }
-    if (userText === "📸 Hisobor yuborish (Report)") {
-      return ctx.reply("📸 Iltimos, muassasaga yetib borganingizdan so'ng, u yerdagi holatni va bajargan ishlarni rasmga tushirib botga yuboring. Hisobot darhol tizimga saqlanadi.");
     }
     if (userText === "ℹ️ Qo'llanma / Yordam") {
       return showHelp(ctx);
