@@ -297,7 +297,14 @@ Vazifanglaringiz:
    - 'distance' (ikki muassasa orasidagi masofani so'raganda)
    - 'info' (bitta muassasani qidirganda yoki u haqda ma'lumot so'raganda)
    - 'list' (tuman maktablari yoki bog'chalari ro'yxatni so'raganda)
-   - 'general' (salomlashish, bot imkoniyati, u-bu mavzudagi umumiy gaplar uchun)`;
+   - 'general' (salomlashish, bot imkoniyati, u-bu mavzudagi umumiy gaplar uchun).
+
+Javobingizni har doim quyidagi JSON ko'rinishida taqdim eting:
+{
+  "replyMessage": "Javob xabari",
+  "matchedLocationIds": [],
+  "intent": "intent_turi"
+}`;
 
         let responseText = "{}";
         if (process.env.GROQ_API_KEY) {
