@@ -299,29 +299,84 @@ Vazifanglaringiz:
    - 'list' (tuman maktablari yoki bog'chalari ro'yxatni so'raganda)
    - 'general' (salomlashish, bot imkoniyati, u-bu mavzudagi umumiy gaplar uchun)`;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.1-flash-lite",
-          contents: userText,
-          config: {
-            systemInstruction: systemPrompt,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                replyMessage: { type: Type.STRING, description: "Uzbek tilidagi odamga o'xshash muloyim, madaniyatli va mazmunli bevosita javob xabari." },
-                matchedLocationIds: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: "Savolga mos keladigan muassasalarning ID-lari massivi (database dagi ID maydoni qiymatlari). Boshlang'ich nuqtadan yakuniy nuqtagacha tartiblangan bo'lishi kerak. Topilmasa, bo'sh massiv [] qoldiring."
-                },
-                intent: { type: Type.STRING, description: "Niyat turi: 'distance', 'info', 'list', yoki 'general'" }
+        let responseText = "{}";
+        if (process.env.GROQ_API_KEY) {
+          try {
+            console.log("Using Groq API (llama-3.3-70b-versatile) for bot query...");
+            const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+                "Content-Type": "application/json"
               },
-              required: ["replyMessage", "matchedLocationIds", "intent"]
+              body: JSON.stringify({
+                model: "llama-3.3-70b-versatile",
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: userText }
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.2
+              })
+            });
+            
+            if (!groqRes.ok) {
+              throw new Error(`Groq API error (status ${groqRes.status}): ${await groqRes.text()}`);
+            }
+            
+            const groqData = await groqRes.json();
+            responseText = groqData.choices[0].message.content || "{}";
+          } catch (groqErr) {
+            console.error("Groq API failed, trying fallback to Gemini if available:", groqErr);
+            if (ai) {
+              const response = await ai.models.generateContent({
+                model: "gemini-3.1-flash-lite",
+                contents: userText,
+                config: {
+                  systemInstruction: systemPrompt,
+                  responseMimeType: "application/json",
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      replyMessage: { type: Type.STRING },
+                      matchedLocationIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      intent: { type: Type.STRING }
+                    },
+                    required: ["replyMessage", "matchedLocationIds", "intent"]
+                  }
+                }
+              });
+              responseText = response.text || "{}";
+            } else {
+              throw groqErr;
             }
           }
-        });
-        
-        const responseText = response.text || "{}";
+        } else if (ai) {
+          const response = await ai.models.generateContent({
+            model: "gemini-3.1-flash-lite",
+            contents: userText,
+            config: {
+              systemInstruction: systemPrompt,
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  replyMessage: { type: Type.STRING, description: "Uzbek tilidagi odamga o'xshash muloyim, madaniyatli va mazmunli bevosita javob xabari." },
+                  matchedLocationIds: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: "Savolga mos keladigan muassasalarning ID-lari massivi (database dagi ID maydoni qiymatlari). Boshlang'ich nuqtadan yakuniy nuqtagacha tartiblangan bo'lishi kerak. Topilmasa, bo'sh massiv [] qoldiring."
+                  },
+                  intent: { type: Type.STRING, description: "Niyat turi: 'distance', 'info', 'list', yoki 'general'" }
+                },
+                required: ["replyMessage", "matchedLocationIds", "intent"]
+              }
+            }
+          });
+          responseText = response.text || "{}";
+        } else {
+          throw new Error("Ikkala AI kaliti (GROQ_API_KEY yoki GEMINI_API_KEY) ham topilmadi.");
+        }
         const result = JSON.parse(responseText);
 
         let finalReplyText = result.replyMessage || "Kechirasiz, so'rovingiz bo'yicha to'g'ri javob tuza olmadim.";

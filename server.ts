@@ -36,8 +36,8 @@ async function startServer() {
         return res.status(400).json({ error: "Text is required" });
       }
 
-      if (!ai) {
-        console.warn("GEMINI_API_KEY is simulated or empty. Allowing text bypass.");
+      if (!ai && !process.env.GROQ_API_KEY) {
+        console.warn("No AI API Keys found (neither GEMINI_API_KEY nor GROQ_API_KEY). Allowing text bypass.");
         return res.json({ isValid: true });
       }
 
@@ -50,29 +50,81 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
   "reason": "sababi"
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              isAcceptable: { 
-                type: Type.BOOLEAN, 
-                description: "True if the text is decent and safe for a public map app, false if it contains vulgar or inappropriate language." 
-              },
-              reason: { 
-                type: Type.STRING, 
-                description: "Explanation of the decision in Uzbek." 
-              }
+      let responseText = "{}";
+
+      if (process.env.GROQ_API_KEY) {
+        try {
+          console.log("Using Groq API for content moderation...");
+          const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+              "Content-Type": "application/json"
             },
-            required: ["isAcceptable", "reason"]
+            body: JSON.stringify({
+              model: "llama-3.3-70b-versatile",
+              messages: [
+                { role: "user", content: prompt }
+              ],
+              response_format: { type: "json_object" },
+              temperature: 0.1
+            })
+          });
+
+          if (!groqRes.ok) {
+            throw new Error(`Groq API error (status ${groqRes.status}): ${await groqRes.text()}`);
+          }
+
+          const groqData = await groqRes.json();
+          responseText = groqData.choices[0].message.content || "{}";
+        } catch (groqErr) {
+          console.error("Groq moderation failed, trying fallback to Gemini if available:", groqErr);
+          if (ai) {
+            const response = await ai.models.generateContent({
+              model: "gemini-3.1-flash-lite",
+              contents: prompt,
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    isAcceptable: { type: Type.BOOLEAN },
+                    reason: { type: Type.STRING }
+                  },
+                  required: ["isAcceptable", "reason"]
+                }
+              }
+            });
+            responseText = response.text?.trim() || "{}";
+          } else {
+            throw groqErr;
           }
         }
-      });
+      } else if (ai) {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                isAcceptable: { 
+                  type: Type.BOOLEAN, 
+                  description: "True if the text is decent and safe for a public map app, false if it contains vulgar or inappropriate language." 
+                },
+                reason: { 
+                  type: Type.STRING, 
+                  description: "Explanation of the decision in Uzbek." 
+                }
+              },
+              required: ["isAcceptable", "reason"]
+            }
+          }
+        });
+        responseText = response.text?.trim() || "{}";
+      }
 
-      const responseText = response.text?.trim() || "{}";
       const result = JSON.parse(responseText);
 
       return res.json({
