@@ -300,7 +300,7 @@ Vazifanglaringiz:
    - 'general' (salomlashish, bot imkoniyati, u-bu mavzudagi umumiy gaplar uchun)`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-3.1-flash-lite",
           contents: userText,
           config: {
             systemInstruction: systemPrompt,
