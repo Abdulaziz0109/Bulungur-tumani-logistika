@@ -19,22 +19,22 @@ const getShortLabelString = (name: string) => {
 };
 
 const createDivIcon = (type: string, name: string) => {
-  let bgColor = '#64748b'; // slate
-  if (type === 'maktab') bgColor = '#2563eb'; // blue
-  else if (type === 'bogcha' || type === 'dmtt') bgColor = '#ef4444'; // red-500
-  else if (type === 'boshqa' || type === 'tashkilot') bgColor = '#059669'; // emerald
+  let bgColor = '#8F7D66'; // Warm neutral slate-500 equivalent
+  if (type === 'maktab') bgColor = '#0EA5E9'; // Osmon-ko'k (Pastel Sky - Brightened)
+  else if (type === 'bogcha' || type === 'dmtt') bgColor = '#FF6F61'; // Shaftoli (Pastel Peach - Brightened)
+  else if (type === 'boshqa' || type === 'tashkilot') bgColor = '#10B981'; // Yalpiz (Pastel Mint - Brightened)
 
   const label = getShortLabelString(name);
 
   return new L.DivIcon({
     className: 'bg-transparent border-0',
-    html: `<div style="background-color: ${bgColor}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bolder; border: 2px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-size: 11px; font-family: ui-sans-serif, system-ui, sans-serif; position: relative;">
+    html: `<div style="background-color: ${bgColor}; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; border: 2.5px solid #FAF8F5; box-shadow: 0 4px 12px rgba(45,44,57,0.18); font-size: 11px; font-family: 'Quicksand', 'Inter', sans-serif; position: relative;">
             ${label}
-            <div style="position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid ${bgColor};"></div>
+            <div style="position: absolute; bottom: -5px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 5.5px solid transparent; border-right: 5.5px solid transparent; border-top: 7px solid ${bgColor};"></div>
           </div>`,
-    iconSize: [24, 30],
-    iconAnchor: [12, 30],
-    popupAnchor: [0, -30]
+    iconSize: [26, 32],
+    iconAnchor: [13, 32],
+    popupAnchor: [0, -32]
   });
 };
 
@@ -3821,25 +3821,25 @@ export default function MapComponent() {
                   }, 400);
                 }}
               >
-                <h3 className="font-extrabold text-[12px] text-white leading-tight mb-1">{loc.name}</h3>
+                <h3 className="font-extrabold text-[13px] text-slate-900 leading-tight mb-1">{loc.name}</h3>
                 {loc.mahalla && (
                   <div className="flex flex-wrap gap-1 justify-center mb-1.5">
-                    <span className="text-[8px] font-bold text-blue-300 bg-blue-950/60 border border-blue-900/40 rounded px-1.5 py-0.5" title="Mahalla">
+                    <span className="text-[8px] font-bold text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5" title="Mahalla">
                       {loc.mahalla}
                     </span>
                   </div>
                 )}
                 
-                <div className="text-[9px] text-slate-300 mb-1.5 px-1 text-left border-t border-b border-dashed border-slate-700/60 py-1 my-1">
+                <div className="text-[9px] text-slate-700 mb-1.5 px-1 text-left border-t border-b border-dashed border-slate-200 py-1 my-1">
                   <div className="flex justify-between items-center font-bold mb-0.5">
-                    <span className="text-[8px] text-slate-400 uppercase tracking-wider font-bold">Mo'ljal:</span>
+                    <span className="text-[8px] text-slate-500 uppercase tracking-wider font-bold">Mo'ljal:</span>
                     {editingLandmarkId !== loc.id && (
                       <button 
                         onClick={(e) => { 
                           e.stopPropagation();
                           startEditingLandmark(loc);
                         }}
-                        className="text-[8px] text-blue-400 hover:text-blue-300 font-bold cursor-pointer underline decoration-dotted"
+                        className="text-[8px] text-blue-600 hover:text-blue-700 font-bold cursor-pointer underline decoration-dotted"
                       >
                         Tahrirlash
                       </button>
@@ -3851,7 +3851,7 @@ export default function MapComponent() {
                         value={tempLandmark}
                         onChange={(e) => setTempLandmark(e.target.value)}
                         placeholder="Masalan: do'kon qarshisida..."
-                        className="w-full p-1 text-[9px] bg-slate-800 border border-slate-700 text-white rounded outline-none focus:border-blue-500 font-medium resize-none h-[38px]"
+                        className="w-full p-1 text-[9px] bg-white border border-slate-200 text-slate-900 rounded outline-none focus:border-blue-500 font-medium resize-none h-[38px]"
                         disabled={isModerating}
                         maxLength={200}
                       />
@@ -3859,36 +3859,36 @@ export default function MapComponent() {
                         <button 
                           disabled={isModerating}
                           onClick={(e) => { e.stopPropagation(); setEditingLandmarkId(null); }}
-                          className="px-1 py-0.5 text-[8px] text-slate-400 font-bold border border-slate-700 rounded hover:bg-slate-800 cursor-pointer"
+                          className="px-1 py-0.5 text-[8px] text-slate-500 font-bold border border-slate-200 rounded hover:bg-slate-50 cursor-pointer"
                         >
                           Ortga
                         </button>
                         <button 
                           disabled={isModerating}
                           onClick={(e) => { e.stopPropagation(); saveLandmark(loc); }}
-                          className="px-1 py-0.5 text-[8px] bg-blue-600 hover:bg-blue-700 text-white font-bold rounded cursor-pointer disabled:opacity-50"
+                          className="px-1 py-0.5 text-[8px] bg-blue-500 hover:bg-blue-600 text-white font-bold rounded cursor-pointer disabled:opacity-50"
                         >
                           {isModerating ? "..." : "Saqlash"}
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-slate-200 italic bg-slate-900/60 rounded px-1.5 py-0.5 text-[9px] border border-slate-800/80 leading-normal font-medium max-h-[48px] overflow-y-auto">
+                    <div className="text-slate-700 italic bg-slate-100 rounded px-1.5 py-0.5 text-[9px] border border-slate-200/60 leading-normal font-medium max-h-[48px] overflow-y-auto">
                       {loc.landmark || "Kiritilmagan"}
                     </div>
                   )}
                 </div>
 
                 {loc.cadastre && (
-                  <div className="flex justify-between items-center text-[8px] text-slate-300 mb-1 px-1">
-                     <span className="font-semibold shrink-0">Kadastr:</span> <span className="font-mono font-bold text-slate-200 border-b border-dashed border-slate-700 select-all">{loc.cadastre}</span>
+                  <div className="flex justify-between items-center text-[8px] text-slate-600 mb-1 px-1">
+                     <span className="font-semibold shrink-0">Kadastr:</span> <span className="font-mono font-bold text-slate-800 border-b border-dashed border-slate-300 select-all">{loc.cadastre}</span>
                   </div>
                 )}
 
                 {currentUser && (
                   <button 
                     onClick={(e) => { e.stopPropagation(); openEditModal(loc); }}
-                    className="print:hidden w-full mt-1.5 py-1 text-[8px] font-bold text-amber-400 bg-amber-400/10 hover:bg-amber-400/25 border border-amber-400/20 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+                    className="print:hidden w-full mt-1.5 py-1 text-[8px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-all cursor-pointer flex items-center justify-center"
                     title={role === 'admin' ? "Tuzatish (Admin)" : "Xato haqida xabar berish"}
                   >
                     Joylashuv xatomi?
@@ -3953,7 +3953,7 @@ export default function MapComponent() {
                   }, 400);
                 }}
               >
-                <h3 className="font-extrabold text-[12px] text-white leading-tight">{loc.name}</h3>
+                <h3 className="font-extrabold text-[12px] text-slate-900 leading-tight">{loc.name}</h3>
               </div>
             </Popup>
           </Marker>
