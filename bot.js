@@ -125,6 +125,60 @@ if (hasValidToken && firebaseConfig) {
   bot.command('stat', showStat);
   bot.command('help', showHelp);
 
+  // Helper: Route viewer by ID
+  bot.command(['route', 'marshrut'], async (ctx) => {
+    try {
+      const text = ctx.message.text.trim();
+      const parts = text.split(/\s+/);
+      if (parts.length < 2) {
+        return ctx.reply(
+          "📍 *MMTB Marshrutini ko'rish:*\n\n" +
+          "Marshrutni ochish uchun uning kodini yozing:\n" +
+          "Masalan: `/route MarshrutID`\n\n" +
+          "Saytdagi «Telegramga yuborish» tugmasi orqali marshrutlarni to'g'ridan-to'g'ri ulashishingiz mumkin.",
+          { parse_mode: 'Markdown' }
+        );
+      }
+
+      const routeId = parts[1].trim();
+      const routeRef = doc(db, 'routes', routeId);
+      const routeSnap = await getDoc(routeRef);
+
+      if (!routeSnap.exists()) {
+        return ctx.reply(`❌ "${routeId}" kodli marshrut topilmadi.`);
+      }
+
+      const routeData = routeSnap.data();
+      const locs = routeData.locations || [];
+      const routeName = routeData.name || "Marshrut";
+      
+      let msg = `🚚 *BULUNG'UR MMTB MARSHRUTI: ${routeName}*\n`;
+      msg += `🔢 Manzillar soni: *${locs.length} ta*\n\n`;
+
+      locs.forEach((loc, idx) => {
+        msg += `*${idx + 1}. ${loc.name}*\n`;
+        if (loc.mahalla) msg += `   🏛 MFY: ${loc.mahalla}\n`;
+        if (loc.landmark) msg += `   📍 Mo'ljal: ${loc.landmark}\n`;
+      });
+
+      const yandexCoords = locs.map(l => `${l.lat},${l.lng}`).join('~');
+      const yandexUrl = `https://yandex.uz/maps/?rtext=${yandexCoords}`;
+
+      await ctx.reply(msg, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🚗 Yandex Navigatsiyada ochish", url: yandexUrl }],
+            [{ text: "🗺 To'liq xaritada ko'rish", web_app: { url: appUrl } }]
+          ]
+        }
+      });
+    } catch (err) {
+      console.error("Route fetch error in bot:", err);
+      ctx.reply("❌ Marshrut ma'lumotlarini yuklashda xatolik yuz berdi.");
+    }
+  });
+
   bot.command('report', (ctx) => {
     ctx.reply("📸 Iltimos, muassasaga yetib borganingizdan so'ng, u yerdagi holatni va bajargan ishlarni rasmga tushirib botga yuboring. Hisobot darhol tizimga saqlanadi.");
   });

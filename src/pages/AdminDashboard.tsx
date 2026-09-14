@@ -5,8 +5,9 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { useNavigate } from 'react-router-dom';
-import { Users, LogOut, Plus, Shield, User, X, Map as MapIcon, ArrowLeft, MessageSquare, Check, XCircle, Camera, Clock } from 'lucide-react';
+import { Users, LogOut, Plus, Shield, User, X, Map as MapIcon, ArrowLeft, MessageSquare, Check, XCircle, Camera, Clock, FileSpreadsheet, Download } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { exportSchoolsAndKindergartensToExcel } from '../utils/excelExporter';
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([]);
@@ -27,11 +28,37 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
 
+  const [locations, setLocations] = useState<any[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+
   useEffect(() => {
     fetchUsers();
     fetchRequests();
     fetchReports();
+    fetchLocations();
   }, []);
+
+  const fetchLocations = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'locations'));
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLocations(list);
+    } catch (e) {
+      console.error("Locations loading error:", e);
+    }
+  };
+
+  const handleDownloadExcel = () => {
+    setIsExporting(true);
+    try {
+      exportSchoolsAndKindergartensToExcel(locations);
+    } catch (e) {
+      console.error(e);
+      alert("Excel fayl yaratishda xatolik yuz berdi");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const fetchReports = async () => {
     try {
@@ -182,6 +209,16 @@ export default function AdminDashboard() {
                 {requests.length > 0 && (
                   <span className="bg-red-500 text-white min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[10px] px-1">{requests.length}</span>
                 )}
+              </button>
+            </li>
+            <li>
+              <button 
+                type="button"
+                onClick={handleDownloadExcel}
+                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-extrabold text-sm text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors border border-emerald-200 cursor-pointer shadow-sm"
+              >
+                <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+                <span className="truncate">Excel Smetani Yuklash</span>
               </button>
             </li>
             <li>

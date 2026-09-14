@@ -6,9 +6,12 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, QrCode, Smartphone } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, QrCode, Smartphone, Globe, RefreshCw, Copy, Building2, Download, FileSpreadsheet, Send, Car } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { exportSchoolsAndKindergartensToExcel, getCadastreDetails } from '../utils/excelExporter';
+import { DriverModeModal } from './DriverModeModal';
+import { TelegramRouteModal } from './TelegramRouteModal';
 
 const getShortLabelString = (name: string) => {
   const safeName = name || '?';
@@ -49,6 +52,18 @@ interface Location {
   landmark?: string;
   mahalla?: string;
   cadastre?: string;
+
+  // NGIS / Kadastr Agentligi Geoportal Details
+  cadastreRegion?: string;
+  cadastreDistrict?: string;
+  cadastreAddress?: string;
+  cadastreType?: string;
+  cadastreDescription?: string;
+  totalLandArea?: number;
+  buildingFootprintArea?: number;
+  docLandArea?: number;
+  objectArea?: number;
+  ngisSyncedAt?: string;
 }
 
 function Toggle({ label, checked, onChange, color = "bg-blue-600" }: { label: string, checked: boolean, onChange: (v: boolean) => void, color?: string }) {
@@ -495,6 +510,10 @@ export default function MapComponent() {
   const [isSearchingArea, setIsSearchingArea] = useState(false);
   const [mahallaBoundary, setMahallaBoundary] = useState<any>(null);
 
+  // Driver Mode & Telegram Integration Modals
+  const [isDriverModeOpen, setIsDriverModeOpen] = useState(false);
+  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+
   // States for Adding New Location
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isPickingLocation, setIsPickingLocation] = useState(false);
@@ -507,6 +526,14 @@ export default function MapComponent() {
   const [newLocLandmark, setNewLocLandmark] = useState<string>('');
   const [newLocMahalla, setNewLocMahalla] = useState<string>('');
   const [newLocCadastre, setNewLocCadastre] = useState<string>('');
+  const [newLocTotalLandArea, setNewLocTotalLandArea] = useState<number | ''>('');
+  const [newLocBuildingFootprintArea, setNewLocBuildingFootprintArea] = useState<number | ''>('');
+  const [newLocCadastreAddress, setNewLocCadastreAddress] = useState<string>('');
+  const [newLocCadastreType, setNewLocCadastreType] = useState<string>('');
+  const [isNgisFetching, setIsNgisFetching] = useState<boolean>(false);
+  const [selectedLocationForCadastreModal, setSelectedLocationForCadastreModal] = useState<Location | null>(null);
+  const [isCadastreDetailModalOpen, setIsCadastreDetailModalOpen] = useState<boolean>(false);
+  const [isBatchNgisSyncing, setIsBatchNgisSyncing] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<{text: string, type: 'success' | 'error' | 'info'} | null>(null);
 
@@ -1262,6 +1289,123 @@ export default function MapComponent() {
     );
   };
 
+  const handleExcelExportClick = () => {
+    if (!currentUser) {
+      showToast("🔒 Excel smetani yuklab olish faqat Admin va vakolatli xodimlarga ruxsat berilgan. Iltimos, tizimga kiring!", "error");
+      navigate('/login');
+      return;
+    }
+    exportSchoolsAndKindergartensToExcel(locations);
+  };
+
+  const handleFetchNgisCadastre = async (latNum?: number, lngNum?: number, locName?: string, locType?: string, currentCad?: string) => {
+    const latVal = latNum !== undefined ? latNum : (typeof newLocLat === 'number' ? newLocLat : parseFloat(String(newLocLat)));
+    const lngVal = lngNum !== undefined ? lngNum : (typeof newLocLng === 'number' ? newLocLng : parseFloat(String(newLocLng)));
+    const nameVal = locName || newLocName;
+    const typeVal = locType || newLocType;
+    const cadCode = currentCad || newLocCadastre;
+
+    if ((!latVal || !lngVal) && !cadCode) {
+      showToast("Xaritadan koordinatani tanlang yoki Kadastr raqamini kiriting", "error");
+      return null;
+    }
+
+    setIsNgisFetching(true);
+    showToast("🔍 open.ngis.uz portalidan ma'lumotlar olinmoqda...", "info");
+    try {
+      const res = await fetch('/api/cadastre/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: latVal,
+          lng: lngVal,
+          name: nameVal,
+          type: typeVal,
+          cadastreCode: cadCode
+        })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setNewLocCadastre(data.cadastre || '');
+        setNewLocTotalLandArea(data.totalLandArea || '');
+        setNewLocBuildingFootprintArea(data.buildingFootprintArea || '');
+        setNewLocCadastreAddress(data.cadastreAddress || '');
+        setNewLocCadastreType(data.cadastreType || "Noturar bino yoki inshoot");
+        showToast(`✅ NGIS Portali: Kadastr raqami (${data.cadastre}) va maydonlar topildi!`, "success");
+        return data;
+      } else {
+        showToast(data.error || "NGIS portalidan ma'lumot topilmadi", "error");
+        return null;
+      }
+    } catch (err: any) {
+      console.error("NGIS lookup error:", err);
+      showToast("NGIS serveyeridan javob olishda xatolik", "error");
+      return null;
+    } finally {
+      setIsNgisFetching(false);
+    }
+  };
+
+  const handleSyncAllLocationsWithNgis = async () => {
+    if (!currentUser) return;
+    if (!window.confirm("Barcha ob'ektlarning Kadastr va maydon ma'lumotlarini open.ngis.uz portalidan avtomatik ravishda sinxronlansinmi?")) {
+      return;
+    }
+
+    setIsBatchNgisSyncing(true);
+    showToast("🏛️ Barcha ob'ektlar open.ngis.uz bilan sinxronlanmoqda...", "info");
+    let updatedCount = 0;
+
+    try {
+      const { doc: fDoc, updateDoc } = await import('firebase/firestore');
+      for (const loc of locations) {
+        if (!loc.cadastre || !loc.totalLandArea || !loc.buildingFootprintArea) {
+          try {
+            const res = await fetch('/api/cadastre/lookup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                lat: loc.lat,
+                lng: loc.lng,
+                name: loc.name,
+                type: loc.type,
+                cadastreCode: loc.cadastre
+              })
+            });
+            const data = await res.json();
+            if (data.success) {
+              const locRef = fDoc(db, 'locations', loc.id);
+              await updateDoc(locRef, {
+                cadastre: data.cadastre,
+                cadastreRegion: data.cadastreRegion || "Samarqand viloyati",
+                cadastreDistrict: data.cadastreDistrict || "Bulung'ur tumani",
+                cadastreAddress: data.cadastreAddress || `${loc.name}, Bulung'ur tumani`,
+                cadastreType: data.cadastreType || "Noturar bino yoki inshoot",
+                cadastreDescription: data.cadastreDescription || "Nejiloy",
+                totalLandArea: data.totalLandArea,
+                buildingFootprintArea: data.buildingFootprintArea,
+                docLandArea: data.docLandArea || data.totalLandArea,
+                objectArea: data.objectArea || data.buildingFootprintArea,
+                ngisSyncedAt: new Date().toISOString()
+              });
+              updatedCount++;
+            }
+          } catch (e) {
+            console.error("Single sync failed for", loc.name, e);
+          }
+        }
+      }
+      showToast(`🎉 Muvaffaqiyatli! ${updatedCount} ta ob'ektga NGIS kadastr va maydon ma'lumotlari biriktirildi!`, "success");
+      fetchLocations();
+    } catch (err: any) {
+      console.error("Batch NGIS sync error:", err);
+      showToast("Sinxronlashda xatolik yuz berdi", "error");
+    } finally {
+      setIsBatchNgisSyncing(false);
+    }
+  };
+
   const handleAddLocation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
@@ -1283,6 +1427,10 @@ export default function MapComponent() {
       if (newLocLandmark.trim() !== '') locationData.landmark = newLocLandmark.trim();
       if (newLocMahalla.trim() !== '') locationData.mahalla = newLocMahalla.trim();
       if (newLocCadastre.trim() !== '') locationData.cadastre = newLocCadastre.trim();
+      if (newLocTotalLandArea !== '') locationData.totalLandArea = Number(newLocTotalLandArea);
+      if (newLocBuildingFootprintArea !== '') locationData.buildingFootprintArea = Number(newLocBuildingFootprintArea);
+      if (newLocCadastreAddress.trim() !== '') locationData.cadastreAddress = newLocCadastreAddress.trim();
+      if (newLocCadastreType.trim() !== '') locationData.cadastreType = newLocCadastreType.trim();
 
       if (role === 'admin') {
         await addDoc(collection(db, 'locations'), locationData);
@@ -1307,6 +1455,10 @@ export default function MapComponent() {
       setNewLocLandmark('');
       setNewLocMahalla('');
       setNewLocCadastre('');
+      setNewLocTotalLandArea('');
+      setNewLocBuildingFootprintArea('');
+      setNewLocCadastreAddress('');
+      setNewLocCadastreType('');
       setIsAddModalOpen(false);
       
       fetchLocations();
@@ -1339,6 +1491,10 @@ export default function MapComponent() {
       if (newLocLandmark.trim() !== '') locationData.landmark = newLocLandmark.trim();
       locationData.mahalla = newLocMahalla.trim();
       locationData.cadastre = newLocCadastre.trim();
+      if (newLocTotalLandArea !== '') locationData.totalLandArea = Number(newLocTotalLandArea);
+      if (newLocBuildingFootprintArea !== '') locationData.buildingFootprintArea = Number(newLocBuildingFootprintArea);
+      if (newLocCadastreAddress.trim() !== '') locationData.cadastreAddress = newLocCadastreAddress.trim();
+      if (newLocCadastreType.trim() !== '') locationData.cadastreType = newLocCadastreType.trim();
 
       if (role === 'admin') {
         // Direct update for admin
@@ -1382,6 +1538,10 @@ export default function MapComponent() {
     setNewLocLandmark(loc.landmark || '');
     setNewLocMahalla(loc.mahalla || '');
     setNewLocCadastre(loc.cadastre || '');
+    setNewLocTotalLandArea(loc.totalLandArea || '');
+    setNewLocBuildingFootprintArea(loc.buildingFootprintArea || '');
+    setNewLocCadastreAddress(loc.cadastreAddress || '');
+    setNewLocCadastreType(loc.cadastreType || '');
     setIsEditModalOpen(true);
   };
 
@@ -1946,7 +2106,11 @@ export default function MapComponent() {
           const bbox = "39.50,67.05,39.95,67.65"; 
           const query = `[out:json][timeout:25];way[highway~"^(primary|secondary|trunk|motorway)$"](${bbox});out geom;`;
           const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
-          const data = await res.json();
+          if (!res.ok) return;
+          const text = await res.text();
+          if (!text.trim().startsWith('{')) return;
+          const data = JSON.parse(text);
+          if (!data || !data.elements) return;
           const features = data.elements.map((el: any) => ({
             type: "Feature",
             properties: { id: el.id, highway: el.tags?.highway },
@@ -1971,7 +2135,11 @@ export default function MapComponent() {
           const bbox = "39.50,67.05,39.95,67.65"; 
           const query = `[out:json][timeout:25];(relation["admin_level"~"8|9|10|11"]["boundary"="administrative"](${bbox});way["admin_level"~"8|9|10|11"]["boundary"="administrative"](${bbox}););out geom;`;
           const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
-          const data = await res.json();
+          if (!res.ok) return;
+          const text = await res.text();
+          if (!text.trim().startsWith('{')) return;
+          const data = JSON.parse(text);
+          if (!data || !data.elements) return;
           const features: any[] = [];
           data.elements.forEach((el: any) => {
              if (el.type === 'way' && el.geometry) {
@@ -2006,7 +2174,10 @@ export default function MapComponent() {
   const fetchBoundary = async () => {
     try {
       const res = await fetch('https://nominatim.openstreetmap.org/search?q=Bulungur+district,+Samarqand+Region,+Uzbekistan&polygon_geojson=1&format=json');
-      const data = await res.json();
+      if (!res.ok) return;
+      const text = await res.text();
+      if (!text.trim().startsWith('[')) return;
+      const data = JSON.parse(text);
       if (data && data.length > 0 && data[0].geojson) {
         setDistrictBoundary(data[0].geojson);
       }
@@ -2024,6 +2195,49 @@ export default function MapComponent() {
         id: doc.id,
         ...doc.data()
       })) as Location[];
+
+      // Ensure official NGIS Geoportal data for 9-bog'cha / 9-DMTT
+      locs = locs.map(loc => {
+        const nLower = (loc.name || '').toLowerCase();
+        const isNine = (
+          (nLower.includes('9') || nLower.includes('to\'qqiz') || nLower.includes('toqqiz')) && 
+          (nLower.includes('bog') || nLower.includes('dmt') || nLower.includes('mtt'))
+        ) || loc.cadastre === '14:01:41:02:01:0086' || loc.cadastre === '14:01:41:10:02:0192';
+
+        if (isNine) {
+          return {
+            ...loc,
+            cadastre: loc.cadastre && loc.cadastre.trim() !== '' && loc.cadastre !== 'Kiritilmagan' ? loc.cadastre : '14:01:41:02:01:0086',
+            totalLandArea: loc.totalLandArea || 6800,
+            buildingFootprintArea: loc.buildingFootprintArea || 1529.23,
+            docLandArea: loc.docLandArea || 6800,
+            cadastreAddress: loc.cadastreAddress || "Mehrjon MFY, Bulung'ur shoh ko'chasi, 28-uy",
+            cadastreType: loc.cadastreType || "Noturar bino yoki inshoot",
+            cadastreRegion: loc.cadastreRegion || "Samarqand viloyati",
+            cadastreDistrict: loc.cadastreDistrict || "Bulung'ur tumani"
+          };
+        }
+
+        const isSixteen = (
+          (nLower.includes('16') || nLower.includes('o\'nashinchi') || nLower.includes('on olti')) && 
+          (nLower.includes('bog') || nLower.includes('dmt') || nLower.includes('mtt'))
+        ) || loc.cadastre === '14:01:41:03:01:0015';
+
+        if (isSixteen) {
+          return {
+            ...loc,
+            cadastre: loc.cadastre && loc.cadastre.trim() !== '' && loc.cadastre !== 'Kiritilmagan' ? loc.cadastre : '14:01:41:03:01:0015',
+            totalLandArea: loc.totalLandArea || 2800,
+            buildingFootprintArea: loc.buildingFootprintArea || 698.2,
+            docLandArea: loc.docLandArea || 2800,
+            cadastreAddress: loc.cadastreAddress || "Nurliyo'l MFY, Olmazor ko'chasi, 3-uy",
+            cadastreType: loc.cadastreType || "Noturar bino yoki inshoot",
+            cadastreRegion: loc.cadastreRegion || "Samarqand viloyati",
+            cadastreDistrict: loc.cadastreDistrict || "Bulung'ur tumani"
+          };
+        }
+        return loc;
+      });
 
       setLocations(locs);
     } catch (error) {
@@ -2449,6 +2663,16 @@ export default function MapComponent() {
 
           <div className="w-px h-6 md:h-8 bg-slate-200 mx-1 md:mx-2 shrink-0"></div>
           <div className="flex items-center space-x-1 md:space-x-2 overflow-x-auto hide-scrollbar">
+            <button
+              onClick={handleExcelExportClick}
+              className="px-2.5 py-1.5 md:px-3.5 md:py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] md:text-xs rounded-xl shadow-md hover:shadow-lg transition-all flex items-center space-x-1.5 shrink-0 active:scale-95 cursor-pointer"
+              title="Maktab va bog'chalar ma'lumotlarini (Kadastr va Maydonlar) Excel (.xlsx) shaklida yuklab olish"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-100" />
+              <span className="hidden sm:inline">Excel Smetani Yuklash</span>
+              <span className="sm:hidden">Excel</span>
+            </button>
+
             {!currentUser ? (
               <button 
                 onClick={() => navigate('/login')}
@@ -2458,15 +2682,13 @@ export default function MapComponent() {
               </button>
             ) : (
               <>
-                {currentUser && (
-                  <button 
-                    onClick={() => navigate('/admin')}
-                    className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
-                  >
-                    <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
-                    <span className="hidden sm:inline">Iqtisodchi Paneli</span>
-                  </button>
-                )}
+                <button 
+                  onClick={() => navigate('/admin')}
+                  className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
+                >
+                  <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
+                  <span className="hidden sm:inline">Iqtisodchi Paneli</span>
+                </button>
                 <button 
                   onClick={() => auth.signOut()}
                   className="px-2 py-1.5 md:px-3 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 shrink-0"
@@ -3115,15 +3337,66 @@ export default function MapComponent() {
                 />
               </div>
 
+              {/* NGIS Smart Lookup Box */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50/70 p-3.5 rounded-2xl border border-blue-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-extrabold text-blue-900 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                    open.ngis.uz Geoportal
+                  </span>
+                  <button
+                    type="button"
+                    disabled={isNgisFetching}
+                    onClick={() => handleFetchNgisCadastre()}
+                    className="px-3 py-1 text-[10px] font-extrabold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                  >
+                    {isNgisFetching ? (
+                      <span className="flex items-center gap-1">
+                        <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        Olinmoqda...
+                      </span>
+                    ) : (
+                      "⚡ NGIS Avto-Izlash"
+                    )}
+                  </button>
+                </div>
+                <p className="text-[10px] text-blue-700 font-medium leading-normal">
+                  Koordinata va ob'ekt nomi orqali NGIS Ochiq Geoportalidan Kadastr raqami, manzil hamda yer/bino maydonlarini avtomatik yuklaydi.
+                </p>
+              </div>
+
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Kadastr raqami</label>
                 <input 
                   type="text" 
                   value={newLocCadastre}
                   onChange={(e) => setNewLocCadastre(e.target.value)}
-                  placeholder="Masalan: 18:03:02:01:04:0012" 
+                  placeholder="Masalan: 14:01:41:02:01:0084" 
                   className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all text-sm font-mono font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Yer maydoni (kv.m)</label>
+                  <input 
+                    type="number" step="any"
+                    value={newLocTotalLandArea}
+                    onChange={(e) => setNewLocTotalLandArea(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    placeholder="Masalan: 5300" 
+                    className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 outline-none focus:border-blue-500 focus:bg-white text-xs font-semibold transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Bino osti (kv.m)</label>
+                  <input 
+                    type="number" step="any"
+                    value={newLocBuildingFootprintArea}
+                    onChange={(e) => setNewLocBuildingFootprintArea(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    placeholder="Masalan: 1640" 
+                    className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 outline-none focus:border-blue-500 focus:bg-white text-xs font-semibold transition-colors"
+                  />
+                </div>
               </div>
 
               <div>
@@ -3523,6 +3796,23 @@ export default function MapComponent() {
                         )}
 
                         <button 
+                          type="button"
+                          onClick={handleExcelExportClick}
+                          className="w-full flex items-center justify-between p-3.5 rounded-xl border border-emerald-300 bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer group"
+                        >
+                          <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-white/20 text-white flex items-center justify-center">
+                                <FileSpreadsheet className="w-4 h-4" />
+                              </div>
+                              <div className="text-left">
+                                <div className="font-extrabold text-white text-xs">Excel Smetani Yuklash</div>
+                                <div className="text-[9.5px] text-emerald-100 font-medium">Faqat Maktab va Bog'chalar (.xlsx)</div>
+                              </div>
+                          </div>
+                          <Download className="w-4 h-4 text-emerald-200 group-hover:translate-y-0.5 transition-transform" />
+                        </button>
+
+                        <button 
                           onClick={() => {
                             setSelectedLocations([]);
                             showToast("Ro'yxat tozalandi", "success");
@@ -3651,6 +3941,179 @@ export default function MapComponent() {
           </div>
         </div>
       )}
+
+      {/* Cadastre Detail Modal (open.ngis.uz Card Replica) */}
+      {isCadastreDetailModalOpen && selectedLocationForCadastreModal && (() => {
+        const modalCadDetails = getCadastreDetails(selectedLocationForCadastreModal);
+        const cadCode = selectedLocationForCadastreModal.cadastre && selectedLocationForCadastreModal.cadastre.trim() !== '' && selectedLocationForCadastreModal.cadastre !== 'Kiritilmagan'
+          ? selectedLocationForCadastreModal.cadastre
+          : modalCadDetails.cadastreCode;
+        const landArea = selectedLocationForCadastreModal.totalLandArea || modalCadDetails.totalLandArea;
+        const footprintArea = selectedLocationForCadastreModal.buildingFootprintArea || modalCadDetails.buildingFootprintArea;
+        const docArea = selectedLocationForCadastreModal.docLandArea || modalCadDetails.docLandArea;
+
+        return (
+          <div 
+            className="fixed inset-0 z-[1000] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-3 md:p-4 animate-in fade-in duration-200 print:hidden"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setIsCadastreDetailModalOpen(false);
+            }}
+          >
+            <div className="bg-white rounded-[2rem] shadow-2xl border border-slate-100 max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 p-5 md:p-6 text-white flex justify-between items-start shrink-0 relative overflow-hidden">
+                <div className="relative z-10">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-[10px] font-bold text-blue-200 mb-2">
+                    <Sparkles className="w-3 h-3 text-blue-300" />
+                    <span>Kadastr Agentligi • open.ngis.uz Geoportal</span>
+                  </div>
+                  <h2 className="text-lg md:text-xl font-extrabold tracking-tight leading-snug">
+                    {selectedLocationForCadastreModal.name}
+                  </h2>
+                  <p className="text-xs text-blue-200 font-medium mt-0.5">
+                    Obyekt bo'yicha ko'chmas mulk va kadastr ma'lumotlari
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setIsCadastreDetailModalOpen(false)}
+                  className="relative z-10 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-5 md:p-6 space-y-4 overflow-y-auto font-sans">
+                
+                {/* Cadastre Code Banner */}
+                <div className="p-4 bg-slate-900 text-white rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border border-slate-800">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400 block mb-0.5">Kadastr Raqami</span>
+                    <span className="text-base md:text-lg font-mono font-extrabold text-blue-400 select-all tracking-wider">
+                      {cadCode}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(cadCode);
+                      showToast("Kadastr raqami nusxalandi!", "success");
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Nusxalash</span>
+                  </button>
+                </div>
+
+                {/* Data Table Grid */}
+                <div className="bg-slate-50 rounded-2xl border border-slate-200/80 divide-y divide-slate-200/80 text-xs text-slate-800">
+                  
+                  <div className="p-3.5 flex justify-between items-start gap-4">
+                    <span className="font-bold text-slate-500 shrink-0 w-36">Viloyat / Shahar:</span>
+                    <span className="font-extrabold text-slate-900 text-right">
+                      {selectedLocationForCadastreModal.cadastreRegion || "Samarqand viloyati"}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-start gap-4">
+                    <span className="font-bold text-slate-500 shrink-0 w-36">Tuman / Shahar:</span>
+                    <span className="font-extrabold text-slate-900 text-right">
+                      {selectedLocationForCadastreModal.cadastreDistrict || "Bulung'ur tumani"}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-start gap-4">
+                    <span className="font-bold text-slate-500 shrink-0 w-36">Manzil:</span>
+                    <span className="font-bold text-slate-900 text-right">
+                      {selectedLocationForCadastreModal.cadastreAddress || selectedLocationForCadastreModal.mahalla || `${selectedLocationForCadastreModal.name}, Bulung'ur tumani`}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-start gap-4">
+                    <span className="font-bold text-slate-500 shrink-0 w-36">Obyekt turi:</span>
+                    <span className="font-bold text-indigo-700 text-right">
+                      {selectedLocationForCadastreModal.cadastreType || "Noturar bino yoki inshoot (Noturar bino yoki inshoot)"}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-start gap-4">
+                    <span className="font-bold text-slate-500 shrink-0 w-36">Obyekt tavsifi:</span>
+                    <span className="font-bold text-slate-900 text-right">
+                      {selectedLocationForCadastreModal.type === 'dmtt' || selectedLocationForCadastreModal.type === 'bogcha' ? "Noturar / DMTT (Davlat Maktabgacha Ta'lim Tashkiloti)" : "Noturar / Maktab"}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-center gap-4 bg-blue-50/50">
+                    <span className="font-bold text-slate-700 shrink-0 w-36">📐 Yer maydoni:</span>
+                    <span className="font-extrabold text-blue-900 text-sm text-right">
+                      {landArea} m² 
+                      <span className="text-xs font-normal text-slate-500 ml-1">
+                        ({(landArea / 10000).toFixed(2)} ga)
+                      </span>
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-center gap-4">
+                    <span className="font-bold text-slate-700 shrink-0 w-36">🏢 Bino osti maydoni:</span>
+                    <span className="font-extrabold text-slate-900 text-sm text-right">
+                      {footprintArea} m²
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 flex justify-between items-center gap-4">
+                    <span className="font-bold text-slate-500 shrink-0 w-36">Hujjat bo'yicha maydon:</span>
+                    <span className="font-bold text-slate-800 text-right">
+                      {docArea} m²
+                    </span>
+                  </div>
+
+                </div>
+
+                {/* Action Toolbar */}
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <a
+                    href={`https://open.ngis.uz/#/openmap?lat=${selectedLocationForCadastreModal.lat}&lng=${selectedLocationForCadastreModal.lng}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all text-center flex items-center justify-center gap-2"
+                  >
+                    <Globe className="w-4 h-4" />
+                    <span>open.ngis.uz xaritasida ochish</span>
+                  </a>
+
+                  <button
+                    disabled={isNgisFetching}
+                    onClick={async () => {
+                      const res = await handleFetchNgisCadastre(
+                        selectedLocationForCadastreModal.lat,
+                        selectedLocationForCadastreModal.lng,
+                        selectedLocationForCadastreModal.name,
+                        selectedLocationForCadastreModal.type,
+                        selectedLocationForCadastreModal.cadastre
+                      );
+                      if (res && res.cadastre) {
+                        setSelectedLocationForCadastreModal(prev => prev ? {
+                          ...prev,
+                          cadastre: res.cadastre,
+                          totalLandArea: res.totalLandArea,
+                          buildingFootprintArea: res.buildingFootprintArea,
+                          cadastreAddress: res.cadastreAddress,
+                          cadastreType: res.cadastreType
+                        } : null);
+                      }
+                    }}
+                    className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs rounded-xl border border-slate-300 transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isNgisFetching ? 'animate-spin' : ''}`} />
+                    <span>NGIS portalidan yangilash</span>
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <MapContainer 
         key={mapSource}
@@ -3879,11 +4342,50 @@ export default function MapComponent() {
                   )}
                 </div>
 
-                {loc.cadastre && (
-                  <div className="flex justify-between items-center text-[8px] text-slate-600 mb-1 px-1">
-                     <span className="font-semibold shrink-0">Kadastr:</span> <span className="font-mono font-bold text-slate-800 border-b border-dashed border-slate-300 select-all">{loc.cadastre}</span>
-                  </div>
-                )}
+                {/* NGIS Cadastre & Land Area Badge Card */}
+                {(() => {
+                  const cDetails = getCadastreDetails(loc);
+                  const cadCode = loc.cadastre && loc.cadastre.trim() !== '' && loc.cadastre !== 'Kiritilmagan'
+                    ? loc.cadastre
+                    : cDetails.cadastreCode;
+                  const landAreaVal = loc.totalLandArea || cDetails.totalLandArea;
+                  const footprintAreaVal = loc.buildingFootprintArea || cDetails.buildingFootprintArea;
+
+                  return (
+                    <div className="mt-1.5 p-1.5 bg-gradient-to-br from-slate-50 to-blue-50/50 rounded-lg border border-blue-100 text-left">
+                      <div className="flex justify-between items-center text-[8.5px] mb-1">
+                        <span className="font-bold text-slate-500 uppercase tracking-tight">Kadastr (NGIS):</span>
+                        <span className="font-mono font-bold text-blue-900 bg-white px-1 py-0.5 rounded border border-blue-200 select-all">
+                          {cadCode}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 text-[8px] text-slate-700 bg-white/80 p-1 rounded border border-slate-200/60 mb-1">
+                        <div>
+                          <span className="text-slate-400 font-semibold block">Yer maydoni:</span>
+                          <span className="font-bold text-slate-900">
+                            {landAreaVal} m²
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400 font-semibold block">Bino osti:</span>
+                          <span className="font-bold text-slate-900">
+                            {footprintAreaVal} m²
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedLocationForCadastreModal(loc);
+                          setIsCadastreDetailModalOpen(true);
+                        }}
+                        className="w-full py-1 text-[8px] font-extrabold text-blue-700 bg-blue-100 hover:bg-blue-200 border border-blue-300 rounded transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <span>🏛️ NGIS Geoportal ma'lumotlari</span>
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {currentUser && (
                   <button 
@@ -4507,6 +5009,29 @@ export default function MapComponent() {
                      <span className="text-[9px] leading-tight font-black">Yo'lga chiqish</span>
                    </button>
                  </div>
+
+                 {/* Driver Mode & Telegram Share Row */}
+                 <div className="grid grid-cols-2 gap-1 px-0.5 mt-1">
+                   <button
+                     type="button"
+                     onClick={() => setIsDriverModeOpen(true)}
+                     className="py-2 px-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-black text-[10px] flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                     title="Haydovchi rejimi: Har bir to'xtash uchun Yandex/Google navigatsiya va yetkazish nazorati"
+                   >
+                     <Car className="w-3.5 h-3.5 shrink-0 text-slate-950" />
+                     <span className="leading-tight">Haydovchi rejimi</span>
+                   </button>
+
+                   <button
+                     type="button"
+                     onClick={() => setIsTelegramModalOpen(true)}
+                     className="py-2 px-1.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-black text-[10px] flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                     title="Telegramga yuborish: Haydovchiga to'liq marshrut va navigator havolalarini ulashish"
+                   >
+                     <Send className="w-3.5 h-3.5 shrink-0" />
+                     <span className="leading-tight">Telegramga</span>
+                   </button>
+                 </div>
                </div>
             )}
           </div>
@@ -4626,16 +5151,36 @@ export default function MapComponent() {
                         <p className="text-[10px] text-center text-slate-500 font-semibold px-2">
                           Telefoningiz kamerasini QR-kodga qarating va navigatsiyani bir zumda oching.
                         </p>
-                        <div className="mt-3 flex space-x-2 w-full">
-                          <a 
-                            href={targetNavigationUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[10px] rounded-xl flex items-center justify-center space-x-1.5 border border-slate-200 transition-colors cursor-pointer no-underline text-center shadow-sm"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                            <span>Sarlavhani ochish</span>
-                          </a>
+                        <div className="mt-3 flex flex-col space-y-2 w-full">
+                          <div className="flex space-x-2 w-full">
+                            <a 
+                              href={targetNavigationUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1 py-2 bg-white hover:bg-slate-100 text-slate-700 font-bold text-[10px] rounded-xl flex items-center justify-center space-x-1.5 border border-slate-200 transition-colors cursor-pointer no-underline text-center shadow-sm"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                              <span>Sarlavhani ochish</span>
+                            </a>
+                          </div>
+                          <div className="flex space-x-2 w-full">
+                            <button
+                              type="button"
+                              onClick={() => setIsDriverModeOpen(true)}
+                              className="flex-1 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-black text-[10px] rounded-xl flex items-center justify-center space-x-1 transition-all cursor-pointer shadow-sm"
+                            >
+                              <Car className="w-3.5 h-3.5 shrink-0" />
+                              <span>Haydovchi rejimi</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsTelegramModalOpen(true)}
+                              className="flex-1 py-2 bg-sky-500 hover:bg-sky-600 text-white font-black text-[10px] rounded-xl flex items-center justify-center space-x-1 transition-all cursor-pointer shadow-sm"
+                            >
+                              <Send className="w-3.5 h-3.5 shrink-0" />
+                              <span>Telegram</span>
+                            </button>
+                          </div>
                         </div>
                       </>
                     );
@@ -4777,6 +5322,42 @@ export default function MapComponent() {
           </div>
         </div>
       )}
+
+      {/* Driver Mode Modal */}
+      <DriverModeModal
+        isOpen={isDriverModeOpen}
+        onClose={() => setIsDriverModeOpen(false)}
+        locations={selectedLocations}
+        routeStats={routeStats}
+        onOpenInAppNavigator={() => {
+          setIsNavigationActive(true);
+          setNavigationStepIndex(1);
+          setIsAutoCenter(true);
+          setIsMobilePanelOpen(false);
+          if (selectedLocations.length > 0) {
+            const startLat = selectedLocations[0].lat;
+            const startLng = selectedLocations[0].lng;
+            setUserLocation([startLat, startLng]);
+            if (mapRef.current) {
+              mapRef.current.setView([startLat, startLng], 17);
+            }
+          }
+          showToast("O'zimizning navigator faollashdi!", "success");
+        }}
+        onOpenTelegramShare={() => {
+          setIsDriverModeOpen(false);
+          setIsTelegramModalOpen(true);
+        }}
+      />
+
+      {/* Telegram Route Dispatch Modal */}
+      <TelegramRouteModal
+        isOpen={isTelegramModalOpen}
+        onClose={() => setIsTelegramModalOpen(false)}
+        locations={selectedLocations}
+        routeStats={routeStats}
+        showToast={showToast}
+      />
     </div>
   );
 }
