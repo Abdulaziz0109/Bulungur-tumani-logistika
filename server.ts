@@ -5,6 +5,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { startTelegramBot, stopTelegramBot } from "./bot/telegramBot";
+import { resolveCadastreDetails } from "./src/utils/cadastreHelpers";
 
 dotenv.config();
 
@@ -196,86 +197,29 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
         });
       }
 
-      // Smart GIS Cadastre Generator based on location & type (Bulung'ur Samarqand cadastre standard 14:01:41:...)
-      const safeName = name || (type === 'maktab' ? 'Maktab binosi' : 'DMTT Bog\'cha binosi');
-      const safeNameLower = safeName.toLowerCase();
-      
-      // Check if this lookup is for 9-bog'cha / 9-DMTT
-      const isNineKindergarten = (
-        (safeNameLower.includes('9') || safeNameLower.includes('to\'qqiz') || safeNameLower.includes('toqqiz')) &&
-        (safeNameLower.includes('bog') || safeNameLower.includes('dmt') || safeNameLower.includes('mtt'))
-      ) || cadastreCode === '14:01:41:02:01:0086' || cadastreCode === '14:01:41:10:02:0192';
-
-      if (isNineKindergarten) {
-        return res.json({
-          success: true,
-          cadastre: "14:01:41:02:01:0086",
-          cadastreRegion: "Samarqand viloyati",
-          cadastreDistrict: "Bulung'ur tumani",
-          cadastreAddress: "Mehrjon MFY, Bulung'ur shoh ko'chasi, 28-uy",
-          cadastreType: "Noturar bino yoki inshoot",
-          cadastreDescription: "Noturar (Noturar)",
-          totalLandArea: 6800,
-          buildingFootprintArea: 1529.23,
-          docLandArea: 6800,
-          objectArea: 1529.23,
-          ngisUrl: `https://open.ngis.uz/#/openmap`,
-          source: "open.ngis.uz (Verfied Geoportal)"
-        });
-      }
-
-      // Check if this lookup is for 16-bog'cha / 16-DMTT
-      const isSixteenKindergarten = (
-        (safeNameLower.includes('16') || safeNameLower.includes('o\'nashinchi') || safeNameLower.includes('on olti')) &&
-        (safeNameLower.includes('bog') || safeNameLower.includes('dmt') || safeNameLower.includes('mtt'))
-      ) || cadastreCode === '14:01:41:03:01:0015';
-
-      if (isSixteenKindergarten) {
-        return res.json({
-          success: true,
-          cadastre: "14:01:41:03:01:0015",
-          cadastreRegion: "Samarqand viloyati",
-          cadastreDistrict: "Bulung'ur tumani",
-          cadastreAddress: "Nurliyo'l MFY, Olmazor ko'chasi, 3-uy",
-          cadastreType: "Noturar bino yoki inshoot",
-          cadastreDescription: "Noturar (Noturar)",
-          totalLandArea: 2800,
-          buildingFootprintArea: 698.2,
-          docLandArea: 2800,
-          objectArea: 698.2,
-          ngisUrl: `https://open.ngis.uz/#/openmap`,
-          source: "open.ngis.uz (Verfied Geoportal)"
-        });
-      }
-
-      const numMatch = safeName.match(/\d+/);
-      const objNum = numMatch ? parseInt(numMatch[0]) : Math.floor(Math.random() * 80) + 10;
-      
-      // Calculate realistic cadastre number for Bulung'ur tumani (14:01:41:xx:xx:xxxx)
-      const sector = String((objNum % 15) + 1).padStart(2, '0');
-      const block = String((objNum % 8) + 1).padStart(2, '0');
-      const parcel = String(objNum * 12 + 84).padStart(4, '0');
-      const generatedCadastre = cadastreCode || `14:01:41:${sector}:${block}:${parcel}`;
-
-      // Calculate area based on building type (schools vs kindergartens)
-      const isSchool = type === 'maktab' || safeName.toLowerCase().includes('maktab');
-      const totalLandArea = isSchool ? (4500 + (objNum % 25) * 200) : (3500 + (objNum % 20) * 150); // in sq.m.
-      const buildingFootprintArea = Math.round(totalLandArea * 0.31 * 100) / 100; // ~31% footprint ratio
+      // Deterministic GIS Cadastre Resolver using exact numeric boundary matching
+      const resolved = resolveCadastreDetails({
+        name,
+        type,
+        lat: typeof lat === "number" ? lat : Number(lat),
+        lng: typeof lng === "number" ? lng : Number(lng),
+        cadastre: cadastreCode,
+      });
 
       return res.json({
         success: true,
-        cadastre: generatedCadastre,
-        cadastreRegion: "Samarqand viloyati",
-        cadastreDistrict: "Bulung'ur tumani",
-        cadastreAddress: `${safeName}, Bulung'ur tumani`,
-        cadastreType: "Noturar bino yoki inshoot",
-        cadastreDescription: isSchool ? "Davlat umumta'lim maktabi binosi" : "Davlat maktabgacha ta'lim tashkiloti (DMTT)",
-        totalLandArea: totalLandArea,
-        buildingFootprintArea: buildingFootprintArea,
-        docLandArea: totalLandArea,
-        objectArea: buildingFootprintArea,
-        ngisUrl: `https://open.ngis.uz/#/openmap`,
-        source: "Milliy GeoaXborot Portali (open.ngis.uz)"
+        cadastre: resolved.cadastreCode,
+        cadastreRegion: resolved.cadastreRegion,
+        cadastreDistrict: resolved.cadastreDistrict,
+        cadastreAddress: resolved.cadastreAddress,
+        cadastreType: resolved.cadastreType,
+        cadastreDescription: resolved.cadastreDescription,
+        totalLandArea: resolved.totalLandArea,
+        buildingFootprintArea: resolved.buildingFootprintArea,
+        docLandArea: resolved.docLandArea,
+        objectArea: resolved.objectArea,
+        ngisUrl: resolved.ngisUrl,
+        source: resolved.source
       });
 
     } catch (error: any) {
@@ -288,12 +232,16 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
   app.get("/api/telegram-photo/:fileId", async (req, res) => {
     try {
       const { fileId } = req.params;
+      if (!fileId || !/^[A-Za-z0-9_-]{10,200}$/.test(fileId)) {
+        return res.status(400).send("Invalid Telegram file ID format.");
+      }
+
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
       if (!botToken || botToken === "yoto_telegram_bot_token" || botToken.trim() === "") {
         return res.status(400).send("Telegram Bot Token is not configured or is using default value.");
       }
 
-      const fileInfoRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+      const fileInfoRes = await fetch(`https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(fileId)}`);
       if (!fileInfoRes.ok) {
         return res.status(400).send("Could not retrieve file metadata from Telegram servers.");
       }
@@ -303,7 +251,10 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
         return res.status(404).send("File path metadata is empty or denied.");
       }
 
-      const filePath = fileInfo.result.file_path;
+      const filePath = String(fileInfo.result.file_path);
+      if (filePath.includes("..") || filePath.startsWith("/")) {
+        return res.status(400).send("Invalid file path returned by Telegram.");
+      }
       const fileUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
 
       const imgRes = await fetch(fileUrl);
@@ -367,8 +318,10 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
         });
       }
 
-      const { chatId, message, yandexUrl, googleUrl, webAppUrl } = req.body;
-      if (!chatId || !message) {
+      const { chatId, message, parseMode, yandexUrl, googleUrl, webAppUrl } = req.body;
+      const normalizedChatId = chatId !== undefined && chatId !== null ? String(chatId).trim() : "";
+      const normalizedMessage = typeof message === "string" ? message : "";
+      if (!normalizedChatId || !normalizedMessage) {
         return res.status(400).json({ success: false, error: "chatId va message talab qilinadi" });
       }
 
@@ -384,22 +337,41 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
       if (navButtons.length > 0) {
         inline_keyboard.push(navButtons);
       }
-      if (webAppUrl) {
+      if (webAppUrl && String(webAppUrl).startsWith("https://")) {
         inline_keyboard.push([{ text: "📱 Xaritada ochish (Web App)", url: webAppUrl }]);
       }
 
-      const sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      const payload: Record<string, any> = {
+        chat_id: normalizedChatId,
+        text: normalizedMessage,
+        reply_markup: inline_keyboard.length > 0 ? { inline_keyboard } : undefined
+      };
+      if (parseMode === "HTML" || parseMode === "Markdown") {
+        payload.parse_mode = parseMode;
+      } else {
+        payload.parse_mode = "Markdown";
+      }
+
+      let sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId.trim(),
-          text: message,
-          parse_mode: "Markdown",
-          reply_markup: inline_keyboard.length > 0 ? { inline_keyboard } : undefined
-        })
+        body: JSON.stringify(payload)
       });
 
-      const result = await sendRes.json() as any;
+      let result = await sendRes.json() as any;
+
+      // Fallback to plain text if Telegram rejects Markdown/HTML entity syntax (e.g., underscores in names)
+      if (!result.ok && typeof result.description === "string" && result.description.toLowerCase().includes("parse entities")) {
+        const plainPayload = { ...payload };
+        delete plainPayload.parse_mode;
+        sendRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(plainPayload)
+        });
+        result = await sendRes.json() as any;
+      }
+
       if (!result.ok) {
         return res.status(400).json({
           success: false,

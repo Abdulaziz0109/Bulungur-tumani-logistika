@@ -44,14 +44,14 @@ export function smartSearchLocations(
   const normQuery = normalizeSearchText(rawQuery);
   if (!normQuery) return [];
 
+  const KG_ALIASES = new Set(['bogcha', 'bog', 'dmtt', 'mtt', 'dmt', 'sadik', 'yasli']);
+  const SCHOOL_ALIASES = new Set(['maktab', 'mkt', 'shkola', 'school']);
+
   const tokens = normQuery.split(' ').filter(Boolean);
-  const queryHasKindergarten = tokens.some(t =>
-    ['bogcha', 'bog', 'dmtt', 'mtt', 'dmt', 'sadik', 'yasli'].includes(t)
-  );
-  const queryHasSchool = tokens.some(t =>
-    ['maktab', 'mkt', 'shkola', 'school'].includes(t)
-  );
+  const queryHasKindergarten = tokens.some(t => KG_ALIASES.has(t));
+  const queryHasSchool = tokens.some(t => SCHOOL_ALIASES.has(t));
   const queryNumbers = tokens.filter(t => /^\d+$/.test(t));
+  const isCadastreQuery = rawQuery.includes(':') || (tokens.length >= 3 && tokens.every(t => /^\d+$/.test(t)));
 
   const scored = locations
     .map((loc) => {
@@ -63,15 +63,16 @@ export function smartSearchLocations(
       const isKg = loc.type === 'dmtt' || loc.type === 'bogcha' || nameNorm.includes('dmtt') || nameNorm.includes('bogcha');
 
       const typeAliases = isSchool ? 'maktab' : isKg ? 'bogcha dmtt mtt' : 'boshqa tashkilot';
-      const combined = `${nameNorm} ${typeAliases} ${mahallaNorm} ${landmarkNorm} ${cadNorm}`;
+      const textPool = `${nameNorm} ${typeAliases} ${mahallaNorm} ${landmarkNorm}`;
+      const combined = isCadastreQuery ? `${textPool} ${cadNorm}` : textPool;
 
       // Every token must match somewhere in combined
       const allTokensMatch = tokens.every((tok) => {
-        if (tok === 'bog' || tok === 'bogcha' || tok === 'dmtt' || tok === 'mtt') {
-          return isKg || combined.includes(tok);
+        if (KG_ALIASES.has(tok)) {
+          return isKg || textPool.includes(tok);
         }
-        if (tok === 'maktab') {
-          return isSchool || combined.includes('maktab');
+        if (SCHOOL_ALIASES.has(tok)) {
+          return isSchool || textPool.includes('maktab');
         }
         return combined.includes(tok);
       });
@@ -92,6 +93,8 @@ export function smartSearchLocations(
           score += 150;
         } else if (nameNorm.startsWith(num)) {
           score += 90;
+        } else if (isCadastreQuery && cadNorm.includes(num)) {
+          score += 50;
         }
       }
 
@@ -153,6 +156,9 @@ export function buildYandexMapsUrl(
       // Leading empty coordinate before '~' instructs Yandex Maps/Navigator to use current GPS!
       pts.push('');
     }
+  } else if (cleanStops.length === 1) {
+    // Single destination without explicit origin needs leading '~' so Yandex treats it as destination
+    pts.push('');
   }
 
   cleanStops.forEach((s) => {
@@ -266,22 +272,28 @@ export function parseMultiQueryLocations(
 ): Location[] {
   if (!rawInput || !rawInput.trim()) return [];
 
-  const segments = rawInput
-    .split(/[,;+&\n]+|\b(?:va|bilan|hamda)\b/i)
-    .map((s) => s.trim())
+  const rawSegments = rawInput
+    .replace(/([a-zA-Z0-9\u0400-\u04FF'‘’`ʻʼ-]+dan)\s+(?=[a-zA-Z0-9\u0400-\u04FF])/gi, '$1 | ')
+    .split(/[,;+&\n|]+|\b(?:va|bilan|hamda)\b/i)
+    .map((s) =>
+      s
+        .trim()
+        .replace(/(gacha|dan|ga)$/i, '')
+        .trim()
+    )
     .filter((s) => s.length > 0);
 
-  if (segments.length < 2) return [];
+  if (rawSegments.length < 2) return [];
 
   // Inherit trailing type hint (e.g. "4, 9 bog'cha" -> apply "bog'cha" if "4" is ambiguous)
-  const lastSegNorm = normalizeSearchText(segments[segments.length - 1]);
-  const trailingIsKg = /\b(bogcha|bog|dmtt|mtt|dmt)\b/.test(lastSegNorm);
-  const trailingIsSchool = /\b(maktab|mkt)\b/.test(lastSegNorm);
+  const lastSegNorm = normalizeSearchText(rawSegments[rawSegments.length - 1]);
+  const trailingIsKg = /\b(bogcha|bog|dmtt|mtt|dmt|sadik|yasli)\b/.test(lastSegNorm);
+  const trailingIsSchool = /\b(maktab|mkt|shkola|school)\b/.test(lastSegNorm);
 
   const picked: Location[] = [];
   const pickedIds = new Set<string>();
 
-  for (const seg of segments) {
+  for (const seg of rawSegments) {
     const normSeg = normalizeSearchText(seg);
     let matches = smartSearchLocations(locations, seg, userLocation, 5);
 

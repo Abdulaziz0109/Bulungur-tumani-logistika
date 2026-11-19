@@ -23,14 +23,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         try {
           const docRef = doc(db, 'users', user.uid);
           const docSnap = await getDoc(docRef);
-          if (docSnap.exists() && docSnap.data().role) {
-            setRole(docSnap.data().role);
+          if (docSnap.exists() && docSnap.data().role === 'admin') {
+            setRole('admin');
           } else {
-            setRole('admin'); 
+            setRole('user');
           }
         } catch (error) {
           console.error("Error fetching user role:", error);
-          setRole('admin');
+          setRole('user');
         }
       } else {
         setRole(null);

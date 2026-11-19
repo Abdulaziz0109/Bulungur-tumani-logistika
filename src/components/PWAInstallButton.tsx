@@ -24,13 +24,14 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
       <button
         type="button"
         onClick={handleClick}
+        aria-label="Telefon ekraniga ilova sifatida o'rnatish"
         className={`flex items-center justify-center gap-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 font-bold transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
-          compact ? 'min-h-[38px] px-2.5 text-[11px]' : 'min-h-[40px] px-3 text-xs'
+          compact ? 'min-h-[36px] min-w-[36px] px-2 2xl:px-2.5 text-[11px]' : 'min-h-[40px] px-3 text-xs'
         }`}
         title="Telefon ekraniga ilova (yorliq) sifatida chiqarish"
       >
-        <Smartphone className="w-3.5 h-3.5 shrink-0" />
-        <span className={compact ? 'hidden xs:inline' : ''}>Ekranga qo'shish</span>
+        <Smartphone className="w-4 h-4 shrink-0" />
+        <span className={compact ? 'hidden 2xl:inline' : ''}>Ekranga qo'shish</span>
       </button>
 
       {showGuide && (
@@ -48,6 +49,7 @@ export const PWAInstallButton: React.FC<{ compact?: boolean }> = ({ compact = fa
               <button
                 type="button"
                 onClick={() => setShowGuide(false)}
+                aria-label="Qo'llanmani yopish"
                 className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center cursor-pointer"
               >
                 <X className="w-4 h-4" />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Search,
   Mic,
@@ -13,7 +14,10 @@ import {
   Check,
   Trash2,
   Navigation,
-  Route
+  Route,
+  ExternalLink,
+  Copy,
+  Smartphone
 } from 'lucide-react';
 import { Location } from '../types';
 import {
@@ -79,6 +83,7 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
 
   const [showControls, setShowControls] = useState(false);
   const [showAndroidNote, setShowAndroidNote] = useState(false);
+  const [copiedWidgetUrl, setCopiedWidgetUrl] = useState(false);
   const [query, setQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'maktab' | 'dmtt'>('all');
   const [isListening, setIsListening] = useState(false);
@@ -272,9 +277,32 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            <Link
+              to="/widget"
+              onClick={onClose}
+              className="min-h-[36px] px-2.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/35 text-sky-200 text-[11px] font-bold flex items-center gap-1 no-underline transition-colors"
+              title="Alohida Meteum uslubidagi vidjet sahifasini ochish"
+            >
+              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Alohida</span>
+            </Link>
+            <button
+              type="button"
+              onClick={() => setShowAndroidNote((v) => !v)}
+              className={`min-h-[36px] px-2.5 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+                showAndroidNote
+                  ? 'bg-emerald-500 text-slate-950'
+                  : 'bg-slate-700/80 hover:bg-slate-700 text-slate-200'
+              }`}
+              title="Telefon bosh ekraniga Meteum kabi vidjet qo'shish"
+            >
+              <Smartphone className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Ekranga</span>
+            </button>
             <button
               type="button"
               onClick={() => setShowControls((v) => !v)}
+              aria-label="Widget hajmini moslash"
               className={`min-h-[36px] px-2.5 rounded-xl text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors ${
                 showControls
                   ? 'bg-sky-500 text-white'
@@ -283,20 +311,68 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
               title="Widget eni va bo'yini moslash"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>Hajm</span>
+              <span className="hidden sm:inline">Hajm</span>
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="min-h-[36px] px-2.5 rounded-xl bg-slate-700/80 hover:bg-slate-600 text-slate-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+              aria-label="Widgetni yopish va xaritaga qaytish"
+              className="min-h-[36px] min-w-[36px] px-2 rounded-xl bg-slate-700/80 hover:bg-slate-600 text-slate-200 text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
               title="To'liq xaritaga qaytish"
             >
-              <MapIcon className="w-3.5 h-3.5" />
-              <span className="hidden xs:inline">Xarita</span>
-              <X className="w-3.5 h-3.5 xs:hidden" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
+
+        {/* Android Home Screen Widget Guide Drawer */}
+        {showAndroidNote && (
+          <div className="px-3.5 py-3 bg-[#172542] border-b border-sky-500/30 space-y-2 text-[11px] text-slate-200 shrink-0">
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-extrabold text-sky-200">
+                Samsung / Android bosh ekraniga Meteum kabi vidjet qo&apos;shish:
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAndroidNote(false)}
+                aria-label="Qo'llanmani yopish"
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-slate-300 leading-relaxed">
+              Brauzer saytlari Androidning <strong>&quot;Vidjetlar&quot;</strong> ro&apos;yxatiga to&apos;g&apos;ridan-to&apos;g&apos;ri kira olmaydi (buning uchun alohida Android ilovasi kerak). Lekin maxsus <strong>/widget</strong> sahifamizni <strong>Web Widget</strong> yoki <strong>Hermit</strong> ilovasi orqali bosh ekranga xuddi Meteum vidjetidek joylashingiz mumkin:
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(`${window.location.origin}/widget`);
+                    setCopiedWidgetUrl(true);
+                    showToast("Vidjet havolasi (/widget) nusxalandi!", 'success');
+                    setTimeout(() => setCopiedWidgetUrl(false), 2000);
+                  } catch {
+                    showToast("Havolani nusxalab bo'lmadi", 'error');
+                  }
+                }}
+                className="flex-1 min-h-[34px] px-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {copiedWidgetUrl ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedWidgetUrl ? 'Nusxalandi!' : '/widget havolasini nusxalash'}</span>
+              </button>
+              <Link
+                to="/widget"
+                onClick={onClose}
+                className="min-h-[34px] px-3 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-extrabold text-[11px] flex items-center justify-center gap-1 no-underline shrink-0"
+              >
+                <span>Ochish</span>
+                <ExternalLink className="w-3 h-3" />
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Size & Layout Controls Drawer */}
         {showControls && (
@@ -382,13 +458,8 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
               className="w-full text-left text-[10px] text-sky-300 hover:text-sky-200 font-semibold flex items-center gap-1 pt-1 cursor-pointer"
             >
               <Info className="w-3.5 h-3.5 shrink-0" />
-              <span>Telefon bosh ekraniga ob-havo vidjetidek qo'yish haqida</span>
+              <span>Telefon bosh ekraniga ob-havo vidjetidek qo'yish qo'llanmasi</span>
             </button>
-            {showAndroidNote && (
-              <p className="text-[10px] text-slate-300 leading-relaxed bg-slate-900/70 p-2.5 rounded-xl border border-slate-700">
-                Chrome/Safari veb-saytlari Android/iOS asosiy ekraniga ob-havo vidjeti kabi tizimli vidjet joylay olmaydi (buning uchun alohida ilova/APK kerak). Biroq telefoningizda ilovani o'rnatsangiz, ikonkani bosib turib <strong>"Tezkor Widget"</strong> yorlig'ini to'g'ridan-to'g'ri bosh ekranga chiqarishingiz yoki Android <em>Pop-up/Split-screen</em> oynasida istalgan o'lchamda ochib qo'yishingiz mumkin.
-              </p>
-            )}
           </div>
         )}
 
@@ -407,6 +478,7 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setQuery('')}
+                aria-label="Qidiruvni tozalash"
                 className="min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -415,6 +487,7 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
             <button
               type="button"
               onClick={handleVoice}
+              aria-label="Ovozli qidiruv"
               className={`min-w-[38px] min-h-[38px] rounded-xl flex items-center justify-center cursor-pointer ${
                 isListening ? 'bg-rose-500 text-white animate-pulse' : 'text-sky-400 hover:bg-slate-700'
               }`}
@@ -557,6 +630,7 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
                           : 'bg-slate-700 hover:bg-slate-600 text-white'
                       }`}
                       title={isSelected ? 'Marshrutdan olib tashlash' : "Marshrutga qo'shish"}
+                      aria-label={isSelected ? `${loc.name} marshrutdan olib tashlash` : `${loc.name} marshrutga qo'shish`}
                     >
                       {isSelected ? <Check className="w-4 h-4 stroke-[3]" /> : '+'}
                     </button>
@@ -610,6 +684,7 @@ export const QuickWidgetPanel: React.FC<QuickWidgetPanelProps> = ({
                   <button
                     type="button"
                     onClick={() => onToggleLocation(stop)}
+                    aria-label={`${stop.name} ni olib tashlash`}
                     className="w-5 h-5 rounded-lg hover:bg-rose-500/30 text-slate-400 hover:text-rose-300 flex items-center justify-center cursor-pointer"
                     title="Olib tashlash"
                   >

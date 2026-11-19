@@ -85,11 +85,15 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
   const formattedText = buildFormattedText();
   const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(window.location.origin)}&text=${encodeURIComponent(formattedText)}`;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(formattedText);
-    setCopied(true);
-    showToast("Marshrut ma'lumotlari nusxalandi!", "success");
-    setTimeout(() => setCopied(false), 2500);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(formattedText);
+      setCopied(true);
+      showToast("Marshrut ma'lumotlari nusxalandi!", "success");
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      showToast("Nusxalashda xatolik yuz berdi. Matnni qo'lda belgilab oling.", "error");
+    }
   };
 
   const handleSendViaBot = async (e: React.FormEvent) => {
@@ -153,6 +157,7 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Modalni yopish"
             className="w-10 h-10 rounded-xl bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer border border-slate-200"
           >
             <X className="w-5 h-5" />
