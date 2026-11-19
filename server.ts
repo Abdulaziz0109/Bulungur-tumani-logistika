@@ -1,13 +1,16 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { startTelegramBot, stopTelegramBot } from "./bot/telegramBot";
 
 dotenv.config();
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   const PORT = 3000;
 
   app.use(express.json());
@@ -414,9 +417,30 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
+
+    // HMR is disabled in this environment; skip the client WebSocket connect call
+    // so Vite does not emit "WebSocket closed without opened" on port 24678.
+    app.get("/@vite/client", async (_req, res, next) => {
+      try {
+        const result = await vite.transformRequest("/@vite/client");
+        if (!result?.code) return next();
+        const patchedCode = result.code.replace(
+          "transport.connect(createHMRHandler(handleMessage));",
+          "/* HMR WebSocket disabled */"
+        );
+        res.setHeader("Content-Type", "application/javascript");
+        return res.status(200).send(patchedCode);
+      } catch {
+        return next();
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
@@ -426,9 +450,15 @@ Faqat quydagi JSON formatida javob bering, boshqa ortiqcha izoh yozmang:
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    startTelegramBot().catch((err) => {
+      console.error("Telegram bot startup error:", err);
+    });
   });
+
+  process.once('SIGINT', () => stopTelegramBot());
+  process.once('SIGTERM', () => stopTelegramBot());
 }
 
 startServer();

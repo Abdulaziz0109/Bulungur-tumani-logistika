@@ -1,26 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Send, 
-  Copy, 
-  Check, 
-  ExternalLink, 
-  X, 
-  MessageSquare, 
-  Bot, 
-  Car, 
-  MapPin, 
-  Clock, 
-  Route, 
-  QrCode,
-  Share2
+import {
+  Send,
+  Copy,
+  Check,
+  X,
+  MessageSquare,
+  Bot,
+  Share2,
+  AlertCircle
 } from 'lucide-react';
 import { Location } from '../types';
+import { buildYandexMapsUrl, buildGoogleMapsUrl } from '../utils/navigationHelpers';
 
 interface TelegramRouteModalProps {
   isOpen: boolean;
   onClose: () => void;
   locations: Location[];
   routeStats: any;
+  userLocation?: [number, number] | null;
+  startFromMyLocation?: boolean;
+  isRoundtrip?: boolean;
   showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
@@ -29,6 +28,9 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
   onClose,
   locations,
   routeStats,
+  userLocation = null,
+  startFromMyLocation = true,
+  isRoundtrip = false,
   showToast
 }) => {
   const [copied, setCopied] = useState(false);
@@ -36,7 +38,6 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [botInfo, setBotInfo] = useState<{ configured: boolean; username: string | null; firstName?: string } | null>(null);
 
-  // Fetch bot info on open
   useEffect(() => {
     if (isOpen) {
       fetch('/api/telegram/info')
@@ -48,24 +49,13 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
 
   if (!isOpen || locations.length === 0) return null;
 
-  // Build Navigator URLs
-  const getYandexMapsUrl = () => {
-    const coords = locations.map(l => `${l.lat},${l.lng}`).join('~');
-    return `https://yandex.uz/maps/?rtext=${coords}`;
-  };
-
-  const getGoogleMapsUrl = () => {
-    const origin = `${locations[0].lat},${locations[0].lng}`;
-    const destination = `${locations[locations.length - 1].lat},${locations.length > 1 ? locations[locations.length - 1].lng : ''}`;
-    const waypoints = locations.slice(1, -1).map(l => `${l.lat},${l.lng}`).join('|');
-    return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints ? `&waypoints=${encodeURIComponent(waypoints)}` : ''}`;
-  };
+  const yandexUrl = buildYandexMapsUrl(locations, userLocation, startFromMyLocation, isRoundtrip);
+  const googleUrl = buildGoogleMapsUrl(locations, userLocation, startFromMyLocation, isRoundtrip);
 
   const todayStr = new Date().toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const distanceKm = routeStats?.distance ? (routeStats.distance / 1000).toFixed(1) : null;
   const durationMin = routeStats?.duration ? Math.round(routeStats.duration / 60) : null;
 
-  // Formatted message text for Telegram dispatch
   const buildFormattedText = () => {
     let msg = `🚚 *BULUNG'UR MMTB — MARSHRUT TOPSHIRIG'I*\n`;
     msg += `📅 *Sana:* ${todayStr}\n`;
@@ -76,23 +66,24 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
     msg += `📋 *BORISH TARTIBI (KETMA-KETLIK):*\n`;
 
     locations.forEach((loc, idx) => {
-      const typeLabel = loc.type === 'dmtt' ? "Bog'cha (DMTT)" : loc.type === 'maktab' ? "Maktab" : "Muassasa";
+      const typeLabel = loc.type === 'dmtt' || loc.type === 'bogcha' ? "Bog'cha (DMTT)" : loc.type === 'maktab' ? "Maktab" : "Muassasa";
       msg += `\n*${idx + 1}. ${loc.name}* (${typeLabel})\n`;
       if (loc.mahalla) msg += `   🏛 *MFY:* ${loc.mahalla}\n`;
       if (loc.landmark) msg += `   📍 *Mo'ljal:* ${loc.landmark}\n`;
       if (loc.cadastre) msg += `   🔢 *Kadastr:* \`${loc.cadastre}\`\n`;
-      msg += `   🚗 [Yandex Navigatsiyada ochish](https://yandex.uz/maps/?rtext=~${loc.lat},${loc.lng})\n`;
+      msg += `   🚗 [Yandex Navigatsiyada ochish](https://yandex.uz/maps/?rtext=~${loc.lat},${loc.lng}&rtt=auto)\n`;
     });
 
     msg += `\n━━━━━━━━━━━━━━━━━━\n`;
     msg += `🗺 *Butun marshrut bo'yicha navigatsiya:*\n`;
-    msg += `• [Yandex Maps orqali yurish](${getYandexMapsUrl()})\n`;
-    msg += `• [Google Maps orqali yurish](${getGoogleMapsUrl()})\n`;
+    msg += `• [Yandex Maps orqali yurish](${yandexUrl})\n`;
+    msg += `• [Google Maps orqali yurish](${googleUrl})\n`;
     msg += `\n🧭 *Bulung'ur MMTB Logistika Tizimi*`;
     return msg;
   };
 
   const formattedText = buildFormattedText();
+  const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(window.location.origin)}&text=${encodeURIComponent(formattedText)}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(formattedText);
@@ -101,13 +92,6 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
     setTimeout(() => setCopied(false), 2500);
   };
 
-  // Direct share in Telegram app / web via deep link
-  const handleOpenTelegramShare = () => {
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(window.location.origin)}&text=${encodeURIComponent(formattedText)}`;
-    window.open(shareUrl, '_blank');
-  };
-
-  // Direct send via Bot API
   const handleSendViaBot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatId.trim()) {
@@ -123,8 +107,8 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
         body: JSON.stringify({
           chatId: chatId.trim(),
           message: formattedText,
-          yandexUrl: getYandexMapsUrl(),
-          googleUrl: getGoogleMapsUrl(),
+          yandexUrl,
+          googleUrl,
           webAppUrl: window.location.origin
         })
       });
@@ -146,7 +130,7 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
   return (
     <div className="fixed inset-0 z-[1050] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
       <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden">
-        
+
         {/* Modal Header */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-gradient-to-r from-sky-50 to-blue-50">
           <div className="flex items-center space-x-3">
@@ -169,22 +153,23 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-xl bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer border border-slate-200"
+            className="w-10 h-10 rounded-xl bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors cursor-pointer border border-slate-200"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Body */}
         <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
-          
+
           {/* Action Choice Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Direct Telegram Share Button */}
-            <button
-              type="button"
-              onClick={handleOpenTelegramShare}
-              className="p-4 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white flex flex-col items-start text-left shadow-lg shadow-sky-500/25 transition-all active:scale-98 cursor-pointer group"
+            {/* Direct Telegram Share Link */}
+            <a
+              href={telegramShareUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-4 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white flex flex-col items-start text-left shadow-lg shadow-sky-500/25 transition-all active:scale-98 cursor-pointer group no-underline"
             >
               <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
                 <Share2 className="w-5 h-5 text-white" />
@@ -193,7 +178,7 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
               <span className="text-[11px] text-sky-100 mt-0.5">
                 Telegram ilovasini ochadi va haydovchi yoki guruhni tanlash imkonini beradi
               </span>
-            </button>
+            </a>
 
             {/* Copy Formatted Text Button */}
             <button
@@ -213,7 +198,7 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
             </button>
           </div>
 
-          {/* Bot Direct Dispatch Form (If Bot Token configured) */}
+          {/* Bot Direct Dispatch Form */}
           <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200">
             <div className="flex items-center space-x-2 mb-2">
               <Bot className="w-4 h-4 text-sky-600" />
@@ -226,9 +211,21 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
                 </span>
               )}
             </div>
-            
+
+            {botInfo && !botInfo.configured && (
+              <div className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2 text-xs text-amber-900">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Telegram Bot tokeni serverda ulanmagan</p>
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    Server muhitiga <code>TELEGRAM_BOT_TOKEN</code> kiritilgandan so'ng bot avtomatik ishga tushadi. Hozircha yuqoridagi <b>"1-chertishda Telegramda ulashish"</b> tugmasidan foydalanishingiz mumkin.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-              Haydovchining Telegram Chat ID raqamini kiriting. Bot haydovchiga chiroyli tugmali xabar qilib topshiradi.
+              Haydovchining Telegram Chat ID raqamini kiriting. Bot haydovchiga tugmali xabar qilib topshiradi.
             </p>
 
             <form onSubmit={handleSendViaBot} className="flex flex-col sm:flex-row gap-2">
@@ -237,12 +234,12 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
                 placeholder="Masalan: 123456789 (Chat ID)"
                 value={chatId}
                 onChange={(e) => setChatId(e.target.value)}
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-800 text-xs font-semibold outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                className="flex-1 min-h-[44px] px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-800 text-xs font-semibold outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
               />
               <button
                 type="submit"
-                disabled={isSending}
-                className="px-4 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer shrink-0"
+                disabled={isSending || (botInfo ? !botInfo.configured : false)}
+                className="min-h-[44px] px-4 py-2.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer shrink-0"
               >
                 {isSending ? (
                   <span>Yuborilmoqda...</span>
@@ -282,13 +279,13 @@ export const TelegramRouteModal: React.FC<TelegramRouteModalProps> = ({
         {/* Modal Footer */}
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-sky-500"></span>
-            <span>Telegram Web App & Bot integratsiyasi</span>
+            <span className={`w-2 h-2 rounded-full ${botInfo?.configured ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            <span>{botInfo?.configured ? "Telegram Bot faol" : "Telegram ulashish tayyor"}</span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold border border-slate-200 transition-colors cursor-pointer"
+            className="min-h-[40px] px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold border border-slate-200 transition-colors cursor-pointer"
           >
             Yopish
           </button>

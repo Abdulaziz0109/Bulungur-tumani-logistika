@@ -6,12 +6,21 @@ import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, where } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, QrCode, Smartphone, Globe, RefreshCw, Copy, Building2, Download, FileSpreadsheet, Send, Car } from 'lucide-react';
+import { Trash2, Route, Navigation, MapPin, Fuel, Clock, Map as MapIcon, Activity, Plus, X, MousePointer2, Printer, Shield, LogOut, Settings2, Layers, Search, Sparkles, UploadCloud, Target, Factory, LocateFixed, Check, Save, History, ExternalLink, CheckCircle2, ChevronRight, XCircle, Compass, ChevronLeft, QrCode, Smartphone, Globe, RefreshCw, Copy, Building2, Download, FileSpreadsheet, Send, Mic, MicOff, Zap, LayoutGrid } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { exportSchoolsAndKindergartensToExcel, getCadastreDetails } from '../utils/excelExporter';
-import { DriverModeModal } from './DriverModeModal';
 import { TelegramRouteModal } from './TelegramRouteModal';
+import { PWAInstallButton, OfflineIndicator } from './PWAInstallButton';
+import { QuickWidgetPanel } from './QuickWidgetPanel';
+import {
+  smartSearchLocations,
+  parseMultiQueryLocations,
+  buildYandexMapsUrl,
+  buildGoogleMapsUrl,
+  sortLocationsNearestFirst,
+  haversineDistanceKm
+} from '../utils/navigationHelpers';
 
 const getShortLabelString = (name: string) => {
   const safeName = name || '?';
@@ -118,7 +127,14 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 export default function MapComponent() {
-  const [locations, setLocations] = useState<Location[]>([]);
+  const [locations, setLocations] = useState<Location[]>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_cached_locations');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [selectedLocations, setSelectedLocations] = useState<Location[]>(() => {
     try {
@@ -178,329 +194,12 @@ export default function MapComponent() {
   });
   const [isCalculating, setIsCalculating] = useState(false);
 
-  // Picture-in-Picture navigation overlay states & refs
-  const [isPipActive, setIsPipActive] = useState(false);
-  const [isFloatingHudVisible, setIsFloatingHudVisible] = useState(true);
-  const [showHudCloseBtn, setShowHudCloseBtn] = useState(false);
-  const pipVideoRef = useRef<HTMLVideoElement | null>(null);
-  const pipCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const drawPipFrame = (
-    ctx: CanvasRenderingContext2D, 
-    width: number, 
-    height: number,
-    data: {
-      turnDistanceText: string;
-      turnInstruction: string;
-      turnModifier: string;
-      turnType: string;
-      nextTurnTypeAfterThis: string;
-      etaMinutes: number;
-      distanceText: string;
-      destinationName: string;
-    }
-  ) => {
-    // Clear & draw background
-    const grad = ctx.createLinearGradient(0, 0, 0, height);
-    grad.addColorStop(0, '#0f172a'); // Very elegant dark slate
-    grad.addColorStop(1, '#020617'); // Almost black
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, height);
-
-    // Draw glowing orbit accents
-    ctx.beginPath();
-    ctx.arc(width / 2, 120, 70, 0, 2 * Math.PI);
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
-    ctx.fill();
-    ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
-    // Draw maneuver arrow on canvas based on modifier
-    ctx.lineWidth = 14;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#ffffff';
-    ctx.fillStyle = '#ffffff';
-
-    const mod = data.turnModifier;
-    const type = data.turnType;
-
-    if (type === 'arrive') {
-      // Draw a Red flag icon
-      ctx.beginPath();
-      ctx.moveTo(256, 160);
-      ctx.lineTo(256, 75);
-      ctx.lineWidth = 8;
-      ctx.strokeStyle = '#9ca3af';
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(256, 72);
-      ctx.lineTo(310, 92);
-      ctx.lineTo(256, 112);
-      ctx.fillStyle = '#ef4444';
-      ctx.fill();
-    } else {
-      ctx.beginPath();
-      switch (mod) {
-        case 'left':
-        case 'sharp left':
-          // Start bottom right of circle, go up, then turn left
-          ctx.moveTo(280, 155);
-          ctx.arcTo(280, 120, 240, 120, 25);
-          ctx.lineTo(210, 120);
-          ctx.stroke();
-          // Arrow head
-          ctx.beginPath();
-          ctx.moveTo(225, 105);
-          ctx.lineTo(200, 120);
-          ctx.lineTo(225, 135);
-          ctx.fill();
-          break;
-        case 'right':
-        case 'sharp right':
-          ctx.moveTo(232, 155);
-          ctx.arcTo(232, 120, 272, 120, 25);
-          ctx.lineTo(302, 120);
-          ctx.stroke();
-          // Arrow head
-          ctx.beginPath();
-          ctx.moveTo(287, 105);
-          ctx.lineTo(312, 120);
-          ctx.lineTo(287, 135);
-          ctx.fill();
-          break;
-        case 'slight left':
-          ctx.moveTo(270, 160);
-          ctx.quadraticCurveTo(270, 120, 225, 100);
-          ctx.stroke();
-          // Arrow head
-          ctx.beginPath();
-          ctx.moveTo(240, 85);
-          ctx.lineTo(212, 95);
-          ctx.lineTo(220, 125);
-          ctx.fill();
-          break;
-        case 'slight right':
-          ctx.moveTo(242, 160);
-          ctx.quadraticCurveTo(242, 120, 287, 100);
-          ctx.stroke();
-          // Arrow head
-          ctx.beginPath();
-          ctx.moveTo(272, 125);
-          ctx.lineTo(300, 95);
-          ctx.lineTo(272, 85);
-          ctx.fill();
-          break;
-        case 'uturn':
-        case 'u-turn':
-          ctx.arc(256, 125, 25, Math.PI, 0, false);
-          ctx.moveTo(231, 125);
-          ctx.lineTo(231, 160);
-          ctx.moveTo(281, 125);
-          ctx.lineTo(281, 160);
-          ctx.stroke();
-          // Arrow head on left lane
-          ctx.beginPath();
-          ctx.moveTo(216, 145);
-          ctx.lineTo(231, 165);
-          ctx.lineTo(246, 145);
-          ctx.fill();
-          break;
-        default: // 'straight' or depart
-          ctx.moveTo(256, 160);
-          ctx.lineTo(256, 85);
-          ctx.stroke();
-          // Arrow head
-          ctx.beginPath();
-          ctx.moveTo(241, 105);
-          ctx.lineTo(256, 80);
-          ctx.lineTo(271, 105);
-          ctx.fill();
-          break;
-      }
-    }
-
-    // Write distance text
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 44px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(data.turnDistanceText || data.distanceText || '0 m', width / 2, 222);
-
-    // Write instruction text
-    ctx.fillStyle = '#94a3b8'; // light slate
-    ctx.font = 'bold 22px sans-serif';
-    
-    // Auto wrapping instruction text helper
-    const words = data.turnInstruction.split(' ');
-    let line = '';
-    let y = 275;
-    const lineHeight = 30;
-    const maxWidth = width - 40;
-    
-    for (let n = 0; n < words.length; n++) {
-      let testLine = line + words[n] + ' ';
-      let metrics = ctx.measureText(testLine);
-      let testWidth = metrics.width;
-      if (testWidth > maxWidth && n > 0) {
-        ctx.fillText(line.trim(), width / 2, y);
-        line = words[n] + ' ';
-        y += lineHeight;
-        if (y > 340) break; // prevent overflowing down
-      } else {
-        line = testLine;
-      }
-    }
-    if (y <= 340) {
-      ctx.fillText(line.trim(), width / 2, y);
-    }
-
-    // Draw beautiful bottom card for metadata
-    ctx.fillStyle = '#0f172a'; // darker container
-    ctx.fillRect(0, 360, width, 152);
-
-    // Thin elegant separator
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(0, 359, width, 1);
-
-    // Draw current active destination name
-    ctx.fillStyle = '#64748b';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText("MANZILGACHA YO'L:", width / 2, 388);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 18.5px sans-serif';
-    ctx.fillText(data.destinationName.toUpperCase(), width / 2, 415);
-
-    // Draw eta and distance remaining
-    ctx.fillStyle = '#10b981'; // Green duration
-    ctx.font = 'bold 24px sans-serif';
-    
-    // Estimate clock time
-    const now = new Date();
-    now.setMinutes(now.getMinutes() + data.etaMinutes);
-    const clockTime = now.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
-    
-    ctx.fillText(`${data.etaMinutes} daqiqa (${clockTime})`, width / 2, 458);
-
-    ctx.fillStyle = '#475569';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(`Masofa: ${data.distanceText}`, width / 2, 490);
-  };
-
-  const startPipMode = async () => {
-    if (!('pictureInPictureEnabled' in document)) {
-      showToast("Xavfsiz brauzeringiz Rasm-ichida-rasm (PiP) rejasini qo'llab-quvvatlamaydi.", "error");
-      return;
-    }
-    
-    try {
-      const canvas = pipCanvasRef.current;
-      const video = pipVideoRef.current;
-      if (!canvas || !video) {
-        showToast("PiP rejasini tayyorlashda ichki xato", "error");
-        return;
-      }
-      
-      // Paint first frame so it is not blank!
-      const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
-      const nextPoint = selectedLocations[nextIndex];
-      let distanceTextVal = "0 m";
-      if (userLocation && nextPoint) {
-        const dKm = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
-        distanceTextVal = dKm < 1 ? `${(dKm * 1000).toFixed(0)} m` : `${dKm.toFixed(1)} km`;
-      }
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        drawPipFrame(ctx, 512, 512, {
-          turnDistanceText: distanceTextVal,
-          turnInstruction: nextPoint ? `Keyingi obyekt: ${nextPoint.name}` : "To'g'riga harakatlaning",
-          turnModifier: "straight",
-          turnType: "depart",
-          nextTurnTypeAfterThis: "",
-          etaMinutes: Math.ceil(selectedLocations.length * 2),
-          distanceText: distanceTextVal,
-          destinationName: nextPoint ? nextPoint.name : "Manzil"
-        });
-      }
-      
-      // Capture stream at 10 FPS
-      let stream;
-      if ((canvas as any).captureStream) {
-        stream = (canvas as any).captureStream(10);
-      } else if ((canvas as any).mozCaptureStream) {
-        stream = (canvas as any).mozCaptureStream(10);
-      } else {
-        showToast("Video oqimini olish imkoni bo'lmadi", "error");
-        return;
-      }
-      
-      video.srcObject = stream;
-      video.muted = true;
-      video.playsInline = true;
-      
-      await video.play();
-      await video.requestPictureInPicture();
-      setIsPipActive(true);
-      showToast("Suzuvchi oyna (PiP) faollashtirildi! Endi bosh ekranda ham navigatsiya ko'rinib turadi.", "success");
-      
-      // Listen for when pip exits natively
-      video.addEventListener('leavepictureinpicture', () => {
-        setIsPipActive(false);
-      }, { once: true });
-    } catch (e: any) {
-      console.error("Picture-in-picture failed:", e);
-      showToast("Rasm-ichida-rasm rejasini ochishda xato: " + (e.message || ""), "error");
-    }
-  };
-  
-  const stopPipMode = async () => {
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      }
-      setIsPipActive(false);
-    } catch (e) {
-      console.error("Failed to stop PiP:", e);
-    }
-  };
-  
-  const togglePipSupport = () => {
-    if (isPipActive) {
-      stopPipMode();
-    } else {
-      startPipMode();
-    }
-  };
-
   const getGoogleMapsUrl = (locationsList: any[]) => {
-    if (!locationsList || locationsList.length < 2) return '';
-    const origin = `${locationsList[0].lat},${locationsList[0].lng}`;
-    let destination = '';
-    let waypoints: any[] = [];
-
-    if (isRoundtrip) {
-      destination = `${locationsList[0].lat},${locationsList[0].lng}`;
-      waypoints = locationsList.slice(1);
-    } else {
-      destination = `${locationsList[locationsList.length - 1].lat},${locationsList[locationsList.length - 1].lng}`;
-      waypoints = locationsList.slice(1, -1);
-    }
-
-    const waypointsStr = waypoints.map(w => `${w.lat},${w.lng}`).join('%7C');
-    return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=driving`;
+    return buildGoogleMapsUrl(locationsList, userLocation, startFromMyLocation, isRoundtrip);
   };
 
   const getYandexMapsUrl = (locationsList: any[]) => {
-    if (!locationsList || locationsList.length < 2) return '';
-    const pts = [...locationsList];
-    if (isRoundtrip) {
-      pts.push(locationsList[0]);
-    }
-    const rtext = pts.map(p => `${p.lat},${p.lng}`).join('~');
-    return `https://yandex.com/maps/?rtext=${rtext}&rtt=auto`;
+    return buildYandexMapsUrl(locationsList, userLocation, startFromMyLocation, isRoundtrip);
   };
 
   const [districtBoundary, setDistrictBoundary] = useState<any>(null);
@@ -510,9 +209,23 @@ export default function MapComponent() {
   const [isSearchingArea, setIsSearchingArea] = useState(false);
   const [mahallaBoundary, setMahallaBoundary] = useState<any>(null);
 
-  // Driver Mode & Telegram Integration Modals
-  const [isDriverModeOpen, setIsDriverModeOpen] = useState(false);
+  // Telegram & Quick Driving States
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  const [startFromMyLocation, setStartFromMyLocation] = useState<boolean>(() => {
+    try {
+      const cached = localStorage.getItem('mmtb_start_from_my_location');
+      return cached !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [isNearbyOpen, setIsNearbyOpen] = useState(false);
+  const [isWidgetOpen, setIsWidgetOpen] = useState(false);
+  const [nearbyFilter, setNearbyFilter] = useState<'all' | 'maktab' | 'dmtt'>('all');
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement>(null);
+  const desktopSearchInputRef = useRef<HTMLInputElement>(null);
 
   // States for Adding New Location
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -541,10 +254,7 @@ export default function MapComponent() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [mapSource, setMapSource] = useState<'osm' | 'google' | 'google_sat' | 'yandex'>(() => {
     try {
-      const isNavActive = localStorage.getItem('mmtb_is_navigation_active') === 'true';
-      if (isNavActive) {
-        return 'google';
-      }
+      localStorage.removeItem('mmtb_is_navigation_active');
       const cached = localStorage.getItem('mmtb_map_source');
       return (cached as any) || 'google';
     } catch {
@@ -592,7 +302,7 @@ export default function MapComponent() {
   const [isUploadingCSV, setIsUploadingCSV] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Location[]>([]);
+  const [searchResults, setSearchResults] = useState<Array<Location & { distanceKm?: number }>>([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [isMapLocked, setIsMapLocked] = useState(false);
@@ -608,7 +318,6 @@ export default function MapComponent() {
 
   const [optimizedRouteDistance, setOptimizedRouteDistance] = useState<number | null>(null);
   const [hideUnselected, setHideUnselected] = useState(false);
-  const [isBottomHudExpanded, setIsBottomHudExpanded] = useState<boolean>(false);
 
   // Recent route searches (last 5 searches)
   const [recentRouteSearches, setRecentRouteSearches] = useState<any[]>(() => {
@@ -620,166 +329,6 @@ export default function MapComponent() {
     }
   });
   const [showRecentSearches, setShowRecentSearches] = useState<boolean>(false);
-
-  const [isNavigationActive, setIsNavigationActive] = useState<boolean>(() => {
-    try {
-      const cached = localStorage.getItem('mmtb_is_navigation_active');
-      return cached === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [navigationStepIndex, setNavigationStepIndex] = useState<number>(() => {
-    try {
-      const cached = localStorage.getItem('mmtb_navigation_step_index');
-      return cached ? parseInt(cached, 10) : 1;
-    } catch {
-      return 1;
-    }
-  });
-  const [isAutoCenter, setIsAutoCenter] = useState<boolean>(() => {
-    try {
-      const cached = localStorage.getItem('mmtb_is_auto_center');
-      return cached !== 'false';
-    } catch {
-      return true;
-    }
-  });
-  const [hideOtherMarkersDuringTrip, setHideOtherMarkersDuringTrip] = useState<boolean>(() => {
-    try {
-      const cached = localStorage.getItem('mmtb_hide_other_markers');
-      return cached !== 'false';
-    } catch {
-      return true;
-    }
-  });
-  const [speedLimit, setSpeedLimit] = useState<number>(() => {
-    try {
-      const cached = localStorage.getItem('mmtb_speed_limit');
-      return cached ? parseInt(cached, 10) : 60;
-    } catch {
-      return 60;
-    }
-  });
-
-  // Synchronize canvas painting when navigation state or steps update
-  useEffect(() => {
-    if (!isNavigationActive || selectedLocations.length < 2) return;
-    
-    const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
-    const nextPoint = selectedLocations[nextIndex];
-    if (!nextPoint) return;
-
-    let distanceTextVal = "GPS kutilmoqda...";
-    let calculatedDistanceKm = 0;
-    if (userLocation) {
-      calculatedDistanceKm = getDistanceFromLatLonInKm(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
-      if (calculatedDistanceKm < 1) {
-        distanceTextVal = `${(calculatedDistanceKm * 1000).toFixed(0)} m`;
-      } else {
-        distanceTextVal = `${calculatedDistanceKm.toFixed(1)} km`;
-      }
-    }
-
-    const etaMinutesVal = calculatedDistanceKm ? Math.max(1, Math.round(calculatedDistanceKm * 2)) : 0;
-    const upcomingManeuver = getUpcomingManeuver(userLocation, routeSteps);
-
-    let turnDistanceText = "";
-    let turnInstruction = "To'g'riga harakatlaning";
-    let turnModifier = "straight";
-    let turnType = "depart";
-    let nextTurnTypeAfterThis = "";
-
-    if (upcomingManeuver) {
-      const m = upcomingManeuver.step.maneuver;
-      turnModifier = m.modifier || "straight";
-      turnType = m.type || "turn";
-      
-      if (upcomingManeuver.distance < 1000) {
-        turnDistanceText = `${Math.round(upcomingManeuver.distance)} m`;
-      } else {
-        turnDistanceText = `${(upcomingManeuver.distance / 1000).toFixed(1)} km`;
-      }
-      
-      if (turnType === 'arrive') {
-        turnInstruction = "Manzilgacha ketmoqdasiz";
-      } else {
-        const modLabel = 
-          turnModifier === 'left' ? "Chapga buriling" :
-          turnModifier === 'right' ? "O'ngga buriling" :
-          turnModifier === 'slight left' ? "Chapga salgina buriling" :
-          turnModifier === 'slight right' ? "O'ngga salgina buriling" :
-          turnModifier === 'sharp left' ? "Chapga keskin buriling" :
-          turnModifier === 'sharp right' ? "O'ngga keskin buriling" :
-          turnModifier === 'uturn' || turnModifier === 'u-turn' ? "Orqaga qayrilish" :
-          "To'g'riga harakatlaning";
-          
-        const streetName = upcomingManeuver.step.name ? ` (${upcomingManeuver.step.name} ko'chasiga)` : "";
-        turnInstruction = `${modLabel}${streetName}`;
-      }
-      
-      const nextStep = routeSteps[upcomingManeuver.index + 1];
-      if (nextStep && nextStep.maneuver) {
-        const nextMod = nextStep.maneuver.modifier;
-        nextTurnTypeAfterThis = nextMod === 'left' ? "Chapga kirish" : nextMod === 'right' ? "O'ngga kirish" : "To'g'ri yo'l";
-      }
-    } else {
-      turnDistanceText = distanceTextVal;
-      turnInstruction = `Keyingi ob'ekt: ${nextPoint.name}`;
-      turnModifier = "straight";
-    }
-
-    const canvas = pipCanvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        drawPipFrame(ctx, 512, 512, {
-          turnDistanceText,
-          turnInstruction,
-          turnModifier,
-          turnType,
-          nextTurnTypeAfterThis,
-          etaMinutes: etaMinutesVal,
-          distanceText: distanceTextVal,
-          destinationName: nextPoint.name
-        });
-      }
-    }
-  }, [isNavigationActive, navigationStepIndex, selectedLocations, userLocation, routeSteps, isRoundtrip]);
-
-  // Active Geolocation watcher for HUD Navigation mode
-  useEffect(() => {
-    if (!isNavigationActive) return;
-
-    if (!navigator.geolocation) {
-      showToast("GPS qurilmangizda qo'llab-quvvatlanmaydi.", "error");
-      return;
-    }
-
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        setUserLocation([lat, lng]);
-
-        if (isAutoCenter && mapRef.current) {
-          mapRef.current.setView([lat, lng], 17); // nice, close street view zoom for HUD navigation
-        }
-      },
-      (error) => {
-        console.error("Navigation GPS watch error:", error);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
-    );
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-    };
-  }, [isNavigationActive, isAutoCenter]);
 
 
   // QR code states
@@ -841,46 +390,7 @@ export default function MapComponent() {
     }
   }, [routeSteps]);
 
-  // Sync other active navigation/route settings to localStorage for reloading persistence
-  useEffect(() => {
-    try {
-      localStorage.setItem('mmtb_is_navigation_active', isNavigationActive ? 'true' : 'false');
-    } catch (e) {
-      console.error(e);
-    }
-  }, [isNavigationActive]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('mmtb_navigation_step_index', String(navigationStepIndex));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [navigationStepIndex]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('mmtb_is_auto_center', isAutoCenter ? 'true' : 'false');
-    } catch (e) {
-      console.error(e);
-    }
-  }, [isAutoCenter]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('mmtb_hide_other_markers', hideOtherMarkersDuringTrip ? 'true' : 'false');
-    } catch (e) {
-      console.error(e);
-    }
-  }, [hideOtherMarkersDuringTrip]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('mmtb_speed_limit', String(speedLimit));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [speedLimit]);
+  // Sync route settings to localStorage for reloading persistence
 
   useEffect(() => {
     try {
@@ -914,125 +424,23 @@ export default function MapComponent() {
     }
   }, [sharedStartPoint]);
 
-  // Auto-hide expanded bottom panel after 5 seconds of inactivity
   useEffect(() => {
-    if (isBottomHudExpanded) {
-      const timer = setTimeout(() => {
-        setIsBottomHudExpanded(false);
-      }, 5000);
-      return () => clearTimeout(timer);
+    try {
+      localStorage.setItem('mmtb_start_from_my_location', startFromMyLocation ? 'true' : 'false');
+    } catch (e) {
+      console.error(e);
     }
-  }, [isBottomHudExpanded]);
-
-  // Dynamic map provider switching based on navigation status (Transition only)
-  const prevNavigationActive = useRef<boolean>(isNavigationActive);
-
-  useEffect(() => {
-    if (isNavigationActive !== prevNavigationActive.current) {
-      if (isNavigationActive) {
-        setMapSource('google');
-        showToast("Navigatsiya rejimi boshlandi. Google xaritasi faollashtirildi.", "info");
-      } else {
-        setMapSource('google');
-        showToast("Navigatsiya rejimi tugatildi. Google xaritasi faollashtirildi.", "info");
-      }
-      prevNavigationActive.current = isNavigationActive;
-    }
-  }, [isNavigationActive]);
+  }, [startFromMyLocation]);
 
   const { role, currentUser } = useAuth();
   const navigate = useNavigate();
-
-  const calculateBearing = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const lat1Rad = lat1 * (Math.PI / 180);
-    const lat2Rad = lat2 * (Math.PI / 180);
-    const y = Math.sin(dLon) * Math.cos(lat2Rad);
-    const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
-    let brng = Math.atan2(y, x) * (180 / Math.PI);
-    return (brng + 360) % 360;
-  };
-
-  // Recommended speed limit adjuster based on current step destination type
-  useEffect(() => {
-    if (isNavigationActive && selectedLocations.length > 0) {
-      const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
-      const nextPoint = selectedLocations[nextIndex];
-      if (nextPoint) {
-        if (nextPoint.type === 'maktab' || nextPoint.type === 'dmtt' || nextPoint.type === 'bogcha') {
-          // Schools and kindergartens require lower speed limits limit like 30 km/h or 50 km/h in Uzbekistan
-          setSpeedLimit(30);
-        } else {
-          setSpeedLimit(60);
-        }
-      }
-    }
-  }, [isNavigationActive, navigationStepIndex, selectedLocations, isRoundtrip]);
-
-  const getDistanceFromLatLonInKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2); 
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-    return R * c; // Distance in km
-  };
-
-  const getUpcomingManeuver = (userLoc: [number, number] | null, steps: any[]) => {
-    if (!userLoc || !steps || steps.length === 0) return null;
-    
-    let closestIndex = 0;
-    let minDistance = Infinity;
-    
-    steps.forEach((step, idx) => {
-      if (!step.maneuver || !step.maneuver.location) return;
-      const stepLat = step.maneuver.location[1];
-      const stepLng = step.maneuver.location[0];
-      const dist = getDistanceFromLatLonInKm(userLoc[0], userLoc[1], stepLat, stepLng) * 1000; // in meters
-      if (dist < minDistance) {
-        minDistance = dist;
-        closestIndex = idx;
-      }
-    });
-    
-    let upcomingIdx = closestIndex;
-    const currentStep = steps[closestIndex];
-    if (currentStep && currentStep.maneuver && currentStep.maneuver.location) {
-      const closestStepLat = currentStep.maneuver.location[1];
-      const closestStepLng = currentStep.maneuver.location[0];
-      const distToClosest = getDistanceFromLatLonInKm(userLoc[0], userLoc[1], closestStepLat, closestStepLng) * 1000;
-      if (distToClosest < 40 && closestIndex < steps.length - 1) {
-        upcomingIdx = closestIndex + 1;
-      }
-    }
-    
-    const upcomingStep = steps[upcomingIdx];
-    if (!upcomingStep || !upcomingStep.maneuver || !upcomingStep.maneuver.location) return null;
-    const upcomingLat = upcomingStep.maneuver.location[1];
-    const upcomingLng = upcomingStep.maneuver.location[0];
-    const distanceToManeuver = getDistanceFromLatLonInKm(userLoc[0], userLoc[1], upcomingLat, upcomingLng) * 1000; // meters
-    
-    return {
-      step: upcomingStep,
-      index: upcomingIdx,
-      distance: distanceToManeuver
-    };
-  };
 
 
   const handleSearch = (q: string) => {
     setSearchQuery(q);
     if (q.trim().length > 0) {
-      const queryLower = q.toLowerCase();
-      const res = filteredLocations.filter(l => 
-        l.name.toLowerCase().includes(queryLower) ||
-        (l.landmark && l.landmark.toLowerCase().includes(queryLower)) ||
-        (l.mahalla && l.mahalla.toLowerCase().includes(queryLower))
-      );
-      setSearchResults(res.slice(0, 6));
+      const res = smartSearchLocations(filteredLocations, q, userLocation, 8);
+      setSearchResults(res);
     } else {
       setSearchResults([]);
     }
@@ -1040,16 +448,275 @@ export default function MapComponent() {
 
   const handleSearchSelect = (loc: Location) => {
     if (mapRef.current) {
-      mapRef.current.flyTo([loc.lat, loc.lng], 16, { duration: 1.5 });
+      mapRef.current.flyTo([loc.lat, loc.lng], 16, { duration: 1.2 });
     }
     setTimeout(() => {
       if (markerRefs.current[loc.id]) {
          markerRefs.current[loc.id]!.openPopup();
       }
-    }, 1500);
+    }, 1250);
     setSearchQuery('');
     setSearchResults([]);
     setIsSearchFocused(false);
+  };
+
+  const toggleVoiceSearch = () => {
+    if (isListeningVoice && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setIsListeningVoice(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showToast("Brauzeringizda ovozli qidiruv qo'llab-quvvatlanmaydi (Chrome/Android da ishlaydi)", "info");
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'uz-UZ';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListeningVoice(true);
+        showToast("🎤 Gapiring: masalan, '9 bogcha' yoki '15 maktab'...", "info");
+      };
+
+      recognition.onresult = (event: any) => {
+        const transcript = event?.results?.[0]?.[0]?.transcript || '';
+        if (transcript) {
+          handleSearch(transcript);
+          setIsSearchFocused(true);
+          mobileSearchInputRef.current?.focus();
+        }
+      };
+
+      recognition.onerror = () => {
+        setIsListeningVoice(false);
+        showToast("Ovozni aniqlab bo'lmadi, qayta urinib ko'ring", "error");
+      };
+
+      recognition.onend = () => {
+        setIsListeningVoice(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setIsListeningVoice(false);
+      showToast("Ovozli qidiruvni yoqib bo'lmadi", "error");
+    }
+  };
+
+  const openNearbyPanel = () => {
+    setIsNearbyOpen(true);
+    setIsSearchFocused(false);
+    if (!userLocation && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+        },
+        () => {
+          // User can tap GPS button inside panel or use district center fallback
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+      );
+    }
+  };
+
+  const applyNearestOrderToSelected = async (originLat: number, originLng: number, locsToSort: Location[]) => {
+    const ordered = sortLocationsNearestFirst(locsToSort, originLat, originLng);
+    setSelectedLocations(ordered);
+    setRouteGeometry(null);
+    setRouteStats(null);
+    showToast("⚡ Manzillar eng yaqinidan tartiblandi!", "success");
+
+    if (ordered.length >= 2) {
+      setIsCalculating(true);
+      try {
+        const coords = ordered.map(l => `${l.lng},${l.lat}`).join(';');
+        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`);
+        const data = await res.json();
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const routeCoords = route.geometry.coordinates.map((c: [number, number]) => [c[1], c[0]] as [number, number]);
+          setRouteGeometry(routeCoords);
+          setRouteStats({ distance: route.distance, duration: route.duration });
+        }
+      } catch (err) {
+        console.error("Nearest route calc error:", err);
+      } finally {
+        setIsCalculating(false);
+      }
+    }
+  };
+
+  const handleSortNearestFirst = () => {
+    if (selectedLocations.length < 2) return;
+    if (userLocation) {
+      applyNearestOrderToSelected(userLocation[0], userLocation[1], selectedLocations);
+      return;
+    }
+    if (!navigator.geolocation) {
+      applyNearestOrderToSelected(center[0], center[1], selectedLocations);
+      return;
+    }
+    showToast("📍 GPS joylashuvingiz aniqlanmoqda...", "info");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setUserLocation([lat, lng]);
+        applyNearestOrderToSelected(lat, lng, selectedLocations);
+      },
+      () => {
+        applyNearestOrderToSelected(selectedLocations[0].lat, selectedLocations[0].lng, selectedLocations);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  };
+
+  const handleQuickNearestRoute = (targetLocs: Location[]) => {
+    if (targetLocs.length === 0) return;
+    const refLat = userLocation ? userLocation[0] : center[0];
+    const refLng = userLocation ? userLocation[1] : center[1];
+    const nearest5 = [...targetLocs]
+      .filter(l => !l.id.startsWith('gps-'))
+      .sort((a, b) => haversineDistanceKm(refLat, refLng, a.lat, a.lng) - haversineDistanceKm(refLat, refLng, b.lat, b.lng))
+      .slice(0, 5);
+    const ordered = sortLocationsNearestFirst(nearest5, refLat, refLng);
+    setSelectedLocations(ordered);
+    setStartFromMyLocation(true);
+    setIsNearbyOpen(false);
+    setIsMobilePanelOpen(true);
+    applyNearestOrderToSelected(refLat, refLng, ordered);
+  };
+
+  const handleToggleWidgetLocation = (loc: Location) => {
+    setSelectedLocations((prev) => {
+      const exists = prev.some((l) => l.id === loc.id);
+      return exists ? prev.filter((l) => l.id !== loc.id) : [...prev, loc];
+    });
+    setRouteGeometry(null);
+    setRouteStats(null);
+  };
+
+  const handleSetWidgetLocations = (locs: Location[]) => {
+    setSelectedLocations(locs.filter((l) => !l.id.startsWith('gps-')));
+    setStartFromMyLocation(true);
+    setRouteGeometry(null);
+    setRouteStats(null);
+  };
+
+  const handleWidgetBuildRouteFromGps = async (locs: Location[], autoSort = false) => {
+    const cleanLocs = locs.filter((l) => !l.id.startsWith('gps-'));
+    if (cleanLocs.length === 0) return;
+
+    const executeWithOrigin = async (originCoords: [number, number] | null) => {
+      setStartFromMyLocation(true);
+      const ordered =
+        autoSort && originCoords
+          ? sortLocationsNearestFirst(cleanLocs, originCoords[0], originCoords[1])
+          : cleanLocs;
+
+      let routeStops: Location[] = ordered;
+      if (originCoords) {
+        const gpsStart: Location = {
+          id: `gps-widget-${Date.now()}`,
+          name: '📍 Mening joylashuvim',
+          type: 'boshqa',
+          lat: originCoords[0],
+          lng: originCoords[1]
+        };
+        routeStops = [gpsStart, ...ordered];
+      }
+
+      setSelectedLocations(routeStops);
+      setRouteGeometry(null);
+      setRouteStats(null);
+      setMultiRouteGeometries(null);
+      setIsWidgetOpen(false);
+      setIsMobilePanelOpen(true);
+
+      if (routeStops.length >= 2) {
+        setIsCalculating(true);
+        try {
+          const coords = routeStops.map((l) => `${l.lng},${l.lat}`).join(';');
+          const res = await fetch(
+            `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`
+          );
+          const data = await res.json();
+          if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+            const route = data.routes[0];
+            const routeCoords = route.geometry.coordinates.map(
+              (c: [number, number]) => [c[1], c[0]] as [number, number]
+            );
+            setRouteGeometry(routeCoords);
+            const allSteps: any[] = [];
+            if (route.legs) {
+              route.legs.forEach((leg: any, legIdx: number) => {
+                if (leg.steps) {
+                  leg.steps.forEach((step: any) => {
+                    allSteps.push({
+                      ...step,
+                      legIndex: legIdx,
+                      targetLabel: routeStops[legIdx + 1]?.name || ''
+                    });
+                  });
+                }
+              });
+            }
+            setRouteSteps(allSteps);
+            setRouteStats({ distance: route.distance, duration: route.duration });
+            if (mapRef.current && routeCoords.length > 0) {
+              mapRef.current.fitBounds(L.latLngBounds(routeCoords), { padding: [50, 50] });
+            }
+            showToast(
+              originCoords
+                ? "📍 Joylashuvingizdan marshrut tayyor!"
+                : "📍 Marshrut tayyor!",
+              'success'
+            );
+          }
+        } catch (err) {
+          console.error('Widget GPS route calc error:', err);
+        } finally {
+          setIsCalculating(false);
+        }
+      } else if (mapRef.current && routeStops.length === 1) {
+        mapRef.current.flyTo([routeStops[0].lat, routeStops[0].lng], 14, { duration: 1.2 });
+        showToast("GPS aniqlanmadi, lekin Yandex/Google tugmasi avto-GPS bilan ishlaydi", 'info');
+      }
+    };
+
+    if (userLocation) {
+      await executeWithOrigin(userLocation);
+      return;
+    }
+
+    if (navigator.geolocation) {
+      showToast("📍 GPS joylashuv olinmoqda...", 'info');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+          setUserLocation(coords);
+          executeWithOrigin(coords);
+        },
+        () => {
+          executeWithOrigin(null);
+        },
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 }
+      );
+      return;
+    }
+
+    await executeWithOrigin(null);
   };
 
   const searchAreaBoundary = async () => {
@@ -1950,6 +1617,43 @@ export default function MapComponent() {
     fetchLocations();
     fetchBoundary();
 
+    // Silently hydrate GPS if permission was already granted
+    if (navigator.geolocation) {
+      const tryPassiveGps = () => {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+          },
+          () => {
+            // Silent ignore on initial load
+          },
+          { enableHighAccuracy: false, timeout: 6000, maximumAge: 60000 }
+        );
+      };
+      if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+        navigator.permissions.query({ name: 'geolocation' as PermissionName }).then((perm) => {
+          if (perm.state === 'granted') {
+            tryPassiveGps();
+          }
+        }).catch(() => {});
+      }
+    }
+
+    // Handle PWA App Shortcuts (?widget=1, ?quick=nearby, ?quick=search)
+    const quickParams = new URLSearchParams(window.location.search);
+    const quickAction = quickParams.get('quick');
+    if (quickParams.get('widget') === '1' || quickAction === 'widget') {
+      setIsWidgetOpen(true);
+    } else if (quickAction === 'nearby') {
+      openNearbyPanel();
+    } else if (quickAction === 'search') {
+      setTimeout(() => {
+        setIsSearchFocused(true);
+        mobileSearchInputRef.current?.focus();
+        desktopSearchInputRef.current?.focus();
+      }, 250);
+    }
+
     // Parse URL for automated routing from Telegram Bot or external links
     const checkAndLoadUrlRoute = async () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -2074,11 +1778,8 @@ export default function MapComponent() {
               }
               
               if (shouldAutostart) {
-                setIsNavigationActive(true);
-                setMapSource('google');
-                setIsAutoCenter(true);
-                setNavigationStepIndex(1); // Start from first step
-                showToast("Avtomatik navigatsiya faollashtirildi!", "success");
+                setIsMobilePanelOpen(true);
+                showToast("Marshrut yuklandi — Yandex yoki Google Navigatsiyani bosing!", "success");
               } else {
                 showToast("Marshrut muvaffaqiyatli tayyorlandi!", "success");
               }
@@ -2240,6 +1941,11 @@ export default function MapComponent() {
       });
 
       setLocations(locs);
+      try {
+        localStorage.setItem('mmtb_cached_locations', JSON.stringify(locs));
+      } catch {
+        // Ignore quota errors
+      }
     } catch (error) {
       console.error('Error fetching locations:', error);
     } finally {
@@ -2248,9 +1954,6 @@ export default function MapComponent() {
   };
 
   const filteredLocations = locations.filter(loc => {
-    if (isNavigationActive && hideOtherMarkersDuringTrip) {
-      if (!selectedLocations.find(l => l.id === loc.id)) return false;
-    }
     if (hideUnselected && selectedLocations.length > 0) {
       if (!selectedLocations.find(l => l.id === loc.id)) return false;
     }
@@ -2586,14 +2289,19 @@ export default function MapComponent() {
     }
   };
 
+  const multiSearchMatches = searchQuery.trim()
+    ? parseMultiQueryLocations(locations, searchQuery, userLocation || center)
+    : [];
+  const multiSearchOrdered = multiSearchMatches.length >= 2
+    ? sortLocationsNearestFirst(
+        multiSearchMatches,
+        userLocation ? userLocation[0] : center[0],
+        userLocation ? userLocation[1] : center[1]
+      )
+    : [];
+
   return (
     <div className="w-full h-full relative font-sans text-slate-900 bg-[#f8fafc] overflow-hidden print:overflow-visible print:bg-white print:p-8 print:h-auto print:-m-8">
-      
-      {/* Hidden elements for Picture-in-Picture navigation */}
-      <div style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: -1 }}>
-        <canvas ref={pipCanvasRef} width={512} height={512} style={{ display: 'block', width: '512px', height: '512px' }} />
-        <video ref={pipVideoRef} muted playsInline style={{ display: 'block', width: '1px', height: '1px' }} />
-      </div>
       
       {/* Print Document Header */}
       <div className="hidden print:block text-center mb-8 border-b-2 border-slate-900 pb-4 shrink-0 mt-8">
@@ -2602,70 +2310,40 @@ export default function MapComponent() {
       </div>
 
       {/* Header Panel */}
-      {!isNavigationActive && (
-        <div className="print:hidden absolute top-3 left-3 right-3 md:top-6 md:left-6 md:right-auto z-[400] bg-white/95 backdrop-blur-md px-3 py-2 md:px-5 md:py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center justify-between md:justify-start space-x-2 md:space-x-4 max-w-none md:max-w-[calc(100vw-32px)]">
-          <div className="flex items-center space-x-2 md:space-x-3">
-            <div className="w-8 h-8 md:w-10 md:h-10 bg-blue-600 rounded-xl flex items-center justify-center shrink-0">
+      <div className="print:hidden absolute top-3 left-3 right-3 md:top-6 md:left-6 md:right-auto z-[400] bg-white/95 backdrop-blur-md px-3 py-2 md:px-5 md:py-3 rounded-2xl shadow-xl border border-slate-100 flex items-center justify-between md:justify-start space-x-2 md:space-x-4 max-w-none md:max-w-[calc(100vw-32px)]">
+          <div className="flex items-center space-x-2 md:space-x-3 shrink-0">
+            <div className="w-9 h-9 md:w-10 md:h-10 bg-blue-600 rounded-xl flex items-center justify-center shrink-0">
               <MapIcon className="w-4 h-4 md:w-5 md:h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[125px] sm:max-w-none">
+              <h1 className="text-sm md:text-lg font-bold tracking-tight text-slate-800 leading-tight truncate max-w-[140px] sm:max-w-none">
                 MMTB Logistika
               </h1>
-              <div className="flex items-center text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+              <div className="flex items-center text-[9px] md:text-[10px] text-slate-500 font-bold uppercase tracking-wider">
                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5 shrink-0"></span>
                  <span className="truncate">{currentUser ? 'Iqtisodchi' : 'Mehmon'}</span>
               </div>
             </div>
           </div>
 
-          {/* Mobile version search bar located in the empty middle space */}
-          <div className="flex-1 md:hidden max-w-[170px] xs:max-w-[210px] sm:max-w-xs mx-1 sm:mx-3 relative">
-            <div className={`relative bg-slate-50 rounded-xl border border-slate-200/80 flex items-center px-2 py-1.5 transition-all ${isSearchFocused ? 'ring-2 ring-blue-500/20 border-blue-500 bg-white' : ''}`}>
-               <Search className="w-3.5 h-3.5 text-slate-400 mr-1.5 shrink-0" />
-               <input 
-                 type="text" 
-                 placeholder="Qidiruv..." 
-                 className="w-full bg-transparent outline-none text-[11px] font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
-                 value={searchQuery}
-                 onChange={(e) => handleSearch(e.target.value)}
-                 onFocus={() => setIsSearchFocused(true)}
-                 onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-               />
-               {searchQuery && (
-                  <button onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]);}} className="p-0.5 text-slate-400 hover:bg-slate-100 rounded-full shrink-0"><X className="w-3 h-3"/></button>
-               )}
-            </div>
-            {/* Mobile Search Results */}
-            {isSearchFocused && searchResults.length > 0 && (
-              <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-[calc(100vw-32px)] xs:w-[250px] sm:w-[280px] mt-2 bg-white rounded-xl shadow-2xl border border-slate-100 overflow-hidden z-[510] animate-in fade-in slide-in-from-top-2">
-                {searchResults.map(res => (
-                  <button 
-                    key={res.id} 
-                    onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
-                    className="w-full text-left px-3 py-2 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col"
-                  >
-                    <span className="font-extrabold text-slate-850 text-[10px] sm:text-[11px] leading-snug">{res.name}</span>
-                    <div className="flex items-center space-x-1 mt-0.5">
-                      <span className="text-[8px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
-                      {res.mahalla && (
-                        <>
-                          <span className="w-0.5 h-0.5 rounded-full bg-slate-200"></span>
-                          <span className="text-[8px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
-                        </>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <div className="hidden md:block w-px h-8 bg-slate-200 mx-2 shrink-0"></div>
 
-          <div className="w-px h-6 md:h-8 bg-slate-200 mx-1 md:mx-2 shrink-0"></div>
-          <div className="flex items-center space-x-1 md:space-x-2 overflow-x-auto hide-scrollbar">
+          <div className="flex items-center space-x-1.5 md:space-x-2 overflow-x-auto hide-scrollbar">
+            <button
+              type="button"
+              onClick={() => setIsWidgetOpen(true)}
+              className="min-h-[38px] px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-[11px] md:text-xs flex items-center gap-1.5 shrink-0 active:scale-95 transition-all cursor-pointer shadow-sm"
+              title="Eni va bo'yi moslashadigan tezkor qidiruv widgeti"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span>Widget</span>
+            </button>
+
+            <PWAInstallButton compact />
+
             <button
               onClick={handleExcelExportClick}
-              className="px-2.5 py-1.5 md:px-3.5 md:py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] md:text-xs rounded-xl shadow-md hover:shadow-lg transition-all flex items-center space-x-1.5 shrink-0 active:scale-95 cursor-pointer"
+              className="min-h-[38px] px-2.5 py-1.5 md:px-3.5 md:py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] md:text-xs rounded-xl shadow-md hover:shadow-lg transition-all flex items-center space-x-1.5 shrink-0 active:scale-95 cursor-pointer"
               title="Maktab va bog'chalar ma'lumotlarini (Kadastr va Maydonlar) Excel (.xlsx) shaklida yuklab olish"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-100" />
@@ -2676,7 +2354,7 @@ export default function MapComponent() {
             {!currentUser ? (
               <button 
                 onClick={() => navigate('/login')}
-                className="px-2 py-1.5 md:px-4 md:py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] md:text-xs rounded-xl shadow-md transition-all font-sans whitespace-nowrap"
+                className="min-h-[38px] px-3 py-1.5 md:px-4 md:py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] md:text-xs rounded-xl shadow-md transition-all font-sans whitespace-nowrap cursor-pointer"
               >
                 Kirish
               </button>
@@ -2684,14 +2362,14 @@ export default function MapComponent() {
               <>
                 <button 
                   onClick={() => navigate('/admin')}
-                  className="px-2 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap"
+                  className="min-h-[38px] px-2.5 py-1.5 md:px-3 md:py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 whitespace-nowrap cursor-pointer"
                 >
-                  <Settings2 className="w-3 h-3 md:w-4 md:h-4" />
+                  <Settings2 className="w-3.5 h-3.5 md:w-4 md:h-4" />
                   <span className="hidden sm:inline">Iqtisodchi Paneli</span>
                 </button>
                 <button 
                   onClick={() => auth.signOut()}
-                  className="px-2 py-1.5 md:px-3 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[10px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 shrink-0"
+                  className="min-h-[38px] px-2.5 py-1.5 md:px-3 md:py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[11px] md:text-xs rounded-xl transition-colors flex items-center space-x-1 shrink-0 cursor-pointer"
                   title="Tizimdan chiqish"
                 >
                    <LogOut className="w-4 h-4" />
@@ -2699,51 +2377,483 @@ export default function MapComponent() {
               </>
             )}
           </div>
-        </div>
-      )}
+      </div>
 
-      {/* Search Bar */}
-      {!isNavigationActive && (
-        <div className="print:hidden absolute hidden md:block md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[94%] sm:w-[90%] sm:max-w-md transition-all">
-          <div className={`relative bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 flex items-center px-4 py-3 transition-colors ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
-             <Search className="w-5 h-5 text-slate-400 mr-3" />
-             <input 
-               type="text" 
-               placeholder="Maktab yoki bog'cha qidiring..." 
-               className="w-full bg-transparent outline-none text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
-               value={searchQuery}
-               onChange={(e) => handleSearch(e.target.value)}
-               onFocus={() => setIsSearchFocused(true)}
-               onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
-             />
-             {searchQuery && (
-                <button onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]);}} className="p-1 text-slate-400 hover:bg-slate-100 rounded-full"><X className="w-4 h-4"/></button>
-             )}
-          </div>
-          {isSearchFocused && searchResults.length > 0 && (
-            <div className="absolute top-full left-0 w-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2">
-              {searchResults.map(res => (
-                <button 
-                  key={res.id} 
-                  onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
-                  className="w-full text-left px-5 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex flex-col"
+      {/* Mobile Full-Width Driving Search & Nearby Bar */}
+      <div className="print:hidden md:hidden absolute top-[68px] left-3 right-3 z-[450]">
+          <div className="flex items-center gap-2">
+            <div className={`flex-1 min-h-[48px] bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 flex items-center pl-3.5 pr-1.5 transition-all ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
+              <Search className="w-5 h-5 text-slate-400 mr-2.5 shrink-0" />
+              <input
+                ref={mobileSearchInputRef}
+                type="text"
+                placeholder="9 bog'cha yoki 4 maktab, 9 bog'cha..."
+                className="w-full min-h-[44px] bg-transparent outline-none text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                value={searchQuery}
+                onChange={(e) => handleSearch(e.target.value)}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setTimeout(() => setIsSearchFocused(false), 260)}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]); }}
+                  className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400 hover:bg-slate-100 rounded-xl shrink-0"
+                  aria-label="Tozalash"
                 >
-                  <span className="font-bold text-slate-800 text-sm leading-tight">{res.name}</span>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
-                    {res.mahalla && (
-                      <>
-                        <span className="w-1 h-1 rounded-full bg-slate-200"></span>
-                        <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
-                      </>
-                    )}
-                  </div>
+                  <X className="w-4 h-4" />
                 </button>
+              )}
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); toggleVoiceSearch(); }}
+                className={`min-w-[42px] min-h-[42px] flex items-center justify-center rounded-xl transition-colors shrink-0 ${
+                  isListeningVoice ? 'bg-rose-500 text-white animate-pulse' : 'text-blue-600 hover:bg-blue-50'
+                }`}
+                title="Ovozli qidiruv"
+                aria-label="Ovozli qidiruv"
+              >
+                {isListeningVoice ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={openNearbyPanel}
+              className="min-h-[48px] px-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs shadow-xl border border-slate-800 flex items-center gap-1.5 shrink-0 active:scale-95 transition-transform cursor-pointer"
+              title="Eng yaqin maktab va bog'chalar"
+            >
+              <LocateFixed className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>Yaqinlar</span>
+            </button>
+          </div>
+
+          {/* Mobile Search Results */}
+          {isSearchFocused && (searchResults.length > 0 || multiSearchOrdered.length >= 2) && (
+            <div className="mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[60vh] overflow-y-auto divide-y divide-slate-100">
+              {multiSearchOrdered.length >= 2 && (
+                <div
+                  className="p-3 bg-emerald-50 border-b border-emerald-200 space-y-2"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-black text-emerald-800 uppercase">
+                      Ko'p manzilli ({multiSearchOrdered.length}):
+                    </span>
+                    {multiSearchOrdered.map((m, idx) => (
+                      <span key={m.id} className="text-[11px] font-bold bg-white text-slate-900 px-2 py-0.5 rounded-lg border border-emerald-200">
+                        {idx + 1}. {m.name}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <a
+                      href={buildYandexMapsUrl(multiSearchOrdered, userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[42px] px-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs flex items-center justify-center no-underline"
+                    >
+                      Yandex
+                    </a>
+                    <a
+                      href={buildGoogleMapsUrl(multiSearchOrdered, userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[42px] px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center justify-center no-underline"
+                    >
+                      Google
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSearchResults([]);
+                        setIsSearchFocused(false);
+                        handleWidgetBuildRouteFromGps(multiSearchOrdered, false);
+                      }}
+                      className="flex-1 min-h-[42px] px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs cursor-pointer"
+                    >
+                      📍 Joylashuvimdan chizish
+                    </button>
+                  </div>
+                </div>
+              )}
+              {searchResults.map(res => (
+                <div
+                  key={res.id}
+                  onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
+                  className="px-3.5 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-extrabold text-slate-900 text-sm leading-snug">{res.name}</span>
+                      {res.distanceKm !== undefined && (
+                        <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                          {res.distanceKm.toFixed(1)} km
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-1.5 mt-1 flex-wrap">
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                        {res.type === 'dmtt' || res.type === 'bogcha' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}
+                      </span>
+                      {res.mahalla && (
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{res.mahalla}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0" onMouseDown={(e) => e.preventDefault()} onClick={(e) => e.stopPropagation()}>
+                    <a
+                      href={buildYandexMapsUrl([res], userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[44px] px-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-[11px] flex items-center justify-center no-underline active:scale-95"
+                      title="Yandex Navigatsiyada ochish"
+                    >
+                      Yandex
+                    </a>
+                    <a
+                      href={buildGoogleMapsUrl([res], userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[44px] px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] flex items-center justify-center no-underline active:scale-95"
+                      title="Google Maps da ochish"
+                    >
+                      Google
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleMarkerClick(res);
+                        showToast(`${res.name} marshrutga qo'shildi`, 'success');
+                      }}
+                      className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-base flex items-center justify-center active:scale-95"
+                      title="Marshrutga qo'shish"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}
         </div>
+
+      {/* Desktop Search Bar */}
+      <div className="print:hidden absolute hidden md:block md:top-6 left-1/2 transform -translate-x-1/2 z-[500] w-[94%] sm:w-[90%] sm:max-w-lg transition-all">
+          <div className="flex items-center gap-2">
+            <div className={`flex-1 relative bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 flex items-center pl-4 pr-2 py-2 transition-colors ${isSearchFocused ? 'ring-4 ring-blue-500/20 border-blue-500' : ''}`}>
+               <Search className="w-5 h-5 text-slate-400 mr-3 shrink-0" />
+               <input
+                 ref={desktopSearchInputRef}
+                 type="text"
+                 placeholder="Qidiruv: 9 bog'cha yoki 4 maktab, 9 bog'cha..."
+                 className="w-full bg-transparent outline-none text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal py-1"
+                 value={searchQuery}
+                 onChange={(e) => handleSearch(e.target.value)}
+                 onFocus={() => setIsSearchFocused(true)}
+                 onBlur={() => setTimeout(() => setIsSearchFocused(false), 260)}
+               />
+               {searchQuery && (
+                  <button onMouseDown={(e) => { e.preventDefault(); setSearchQuery(''); setSearchResults([]);}} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-full cursor-pointer"><X className="w-4 h-4"/></button>
+               )}
+               <button
+                 type="button"
+                 onMouseDown={(e) => { e.preventDefault(); toggleVoiceSearch(); }}
+                 className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                   isListeningVoice ? 'bg-rose-500 text-white animate-pulse' : 'text-blue-600 hover:bg-blue-50'
+                 }`}
+                 title="Ovozli qidiruv"
+               >
+                 {isListeningVoice ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+               </button>
+            </div>
+            <button
+              type="button"
+              onClick={openNearbyPanel}
+              className="px-3.5 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs shadow-xl border border-slate-800 flex items-center gap-1.5 shrink-0 cursor-pointer active:scale-95 transition-all"
+              title="Eng yaqin maktab va bog'chalarni topish"
+            >
+              <LocateFixed className="w-4 h-4 text-sky-400" />
+              <span>Yaqinlar</span>
+            </button>
+          </div>
+          {isSearchFocused && (searchResults.length > 0 || multiSearchOrdered.length >= 2) && (
+            <div className="absolute top-full left-0 w-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in slide-in-from-top-2 divide-y divide-slate-100 max-h-[60vh] overflow-y-auto">
+              {multiSearchOrdered.length >= 2 && (
+                <div
+                  className="p-3 bg-emerald-50 border-b border-emerald-200 space-y-2"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-black text-emerald-800 uppercase">
+                      Ko'p manzilli ({multiSearchOrdered.length}):
+                    </span>
+                    {multiSearchOrdered.map((m, idx) => (
+                      <span key={m.id} className="text-[11px] font-bold bg-white text-slate-900 px-2 py-0.5 rounded-lg border border-emerald-200">
+                        {idx + 1}. {m.name}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <a
+                      href={buildYandexMapsUrl(multiSearchOrdered, userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs no-underline"
+                    >
+                      Yandex
+                    </a>
+                    <a
+                      href={buildGoogleMapsUrl(multiSearchOrdered, userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs no-underline"
+                    >
+                      Google
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSearchResults([]);
+                        setIsSearchFocused(false);
+                        handleWidgetBuildRouteFromGps(multiSearchOrdered, false);
+                      }}
+                      className="flex-1 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs cursor-pointer"
+                    >
+                      📍 Joylashuvimdan xaritada chizish
+                    </button>
+                  </div>
+                </div>
+              )}
+              {searchResults.map(res => (
+                <div
+                  key={res.id}
+                  onMouseDown={(e) => { e.preventDefault(); handleSearchSelect(res); }}
+                  className="px-4 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800 text-sm leading-tight">{res.name}</span>
+                      {res.distanceKm !== undefined && (
+                        <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                          {res.distanceKm.toFixed(1)} km
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">{res.type === 'dmtt' || res.type === 'bogcha' ? "Bog'cha" : res.type === 'maktab' ? "Maktab" : "Boshqa"}</span>
+                      {res.mahalla && (
+                        <>
+                          <span className="w-1 h-1 rounded-full bg-slate-200"></span>
+                          <span className="text-[9px] font-bold text-indigo-500 bg-indigo-50 px-1 rounded">{res.mahalla}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0" onMouseDown={(e) => e.preventDefault()} onClick={(e) => e.stopPropagation()}>
+                    <a
+                      href={buildYandexMapsUrl([res], userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold text-[11px] no-underline"
+                    >
+                      Yandex
+                    </a>
+                    <a
+                      href={buildGoogleMapsUrl([res], userLocation, true)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] no-underline"
+                    >
+                      Google
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleMarkerClick(res);
+                        showToast(`${res.name} marshrutga qo'shildi`, 'success');
+                      }}
+                      className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-sm flex items-center justify-center cursor-pointer"
+                      title="Marshrutga qo'shish"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+      {/* Nearby ("Yaqin atrofdagilar") Quick Drawer */}
+      {isNearbyOpen && (
+        <div
+          className="print:hidden fixed inset-0 z-[950] bg-slate-900/50 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsNearbyOpen(false);
+          }}
+        >
+          <div className="w-full md:max-w-lg bg-white rounded-t-3xl md:rounded-3xl shadow-2xl border border-slate-100 max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-slate-900 text-sky-400 flex items-center justify-center shrink-0">
+                  <LocateFixed className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">Eng yaqin muassasalar</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {userLocation ? "Sizning GPS joylashuvingiz bo'yicha saralandi" : "GPS kutilmoqda (tuman markazi bo'yicha)"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNearbyOpen(false)}
+                className="w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 border-b border-slate-100 shrink-0">
+              {!userLocation && (
+                <button
+                  type="button"
+                  onClick={handleGetLocation}
+                  className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LocateFixed className="w-4 h-4" />
+                  <span>📍 Mening hozirgi GPS joylashuvimni aniqlash</span>
+                </button>
+              )}
+
+              <div className="grid grid-cols-3 gap-1.5 bg-slate-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setNearbyFilter('all')}
+                  className={`min-h-[40px] rounded-lg text-xs font-extrabold transition-all cursor-pointer ${nearbyFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Barchasi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNearbyFilter('maktab')}
+                  className={`min-h-[40px] rounded-lg text-xs font-extrabold transition-all cursor-pointer ${nearbyFilter === 'maktab' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Maktablar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNearbyFilter('dmtt')}
+                  className={`min-h-[40px] rounded-lg text-xs font-extrabold transition-all cursor-pointer ${nearbyFilter === 'dmtt' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Bog'chalar
+                </button>
+              </div>
+
+              {(() => {
+                const pool = locations.filter(l => {
+                  if (nearbyFilter === 'maktab') return l.type === 'maktab';
+                  if (nearbyFilter === 'dmtt') return l.type === 'dmtt' || l.type === 'bogcha';
+                  return true;
+                });
+                return (
+                  <button
+                    type="button"
+                    onClick={() => handleQuickNearestRoute(pool)}
+                    disabled={pool.length === 0}
+                    className="w-full min-h-[46px] px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
+                  >
+                    <Zap className="w-4 h-4 text-amber-300 shrink-0" />
+                    <span>Eng yaqin 5 tasiga navbat bilan marshrut tuzish</span>
+                  </button>
+                );
+              })()}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2">
+              {(() => {
+                const refLat = userLocation ? userLocation[0] : center[0];
+                const refLng = userLocation ? userLocation[1] : center[1];
+                const nearbyItems = locations
+                  .filter(l => {
+                    if (nearbyFilter === 'maktab') return l.type === 'maktab';
+                    if (nearbyFilter === 'dmtt') return l.type === 'dmtt' || l.type === 'bogcha';
+                    return true;
+                  })
+                  .map(l => ({
+                    ...l,
+                    distKm: haversineDistanceKm(refLat, refLng, l.lat, l.lng)
+                  }))
+                  .sort((a, b) => a.distKm - b.distKm)
+                  .slice(0, 8);
+
+                if (nearbyItems.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-xs text-slate-400 font-semibold">
+                      Ob'ektlar topilmadi
+                    </div>
+                  );
+                }
+
+                return nearbyItems.map((loc, idx) => (
+                  <div
+                    key={loc.id}
+                    className="p-3 rounded-2xl border border-slate-200 bg-white flex items-center justify-between gap-2 shadow-sm"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-black text-slate-400">#{idx + 1}</span>
+                        <span className="font-extrabold text-sm text-slate-900 truncate">{loc.name}</span>
+                        <span className="text-[11px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                          {loc.distKm.toFixed(1)} km
+                        </span>
+                      </div>
+                      {loc.mahalla && (
+                        <p className="text-[11px] text-slate-500 font-medium truncate mt-0.5">{loc.mahalla}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <a
+                        href={buildYandexMapsUrl([loc], userLocation, true)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[44px] px-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs flex items-center justify-center no-underline active:scale-95"
+                      >
+                        Yandex
+                      </a>
+                      <a
+                        href={buildGoogleMapsUrl([loc], userLocation, true)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[44px] px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs flex items-center justify-center no-underline active:scale-95"
+                      >
+                        Google
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleMarkerClick(loc);
+                          showToast(`${loc.name} marshrutga qo'shildi`, 'success');
+                        }}
+                        className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-base flex items-center justify-center cursor-pointer"
+                        title="Marshrutga qo'shish"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
       )}
+
+      {/* Offline Banner */}
+      <OfflineIndicator />
 
       {/* Toast Notification */}
       {toastMessage && (
@@ -3280,7 +3390,7 @@ export default function MapComponent() {
       </div>
 
       {/* Modal - Add/Edit Location */}
-      {(isAddModalOpen || isEditModalOpen) && currentUser && !isNavigationActive && (
+      {(isAddModalOpen || isEditModalOpen) && currentUser && (
         <div 
           className="absolute inset-0 z-[500] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {
@@ -3526,7 +3636,7 @@ export default function MapComponent() {
       )}
 
       {/* Settings Modal */}
-      {isSettingsOpen && !isNavigationActive && (
+      {isSettingsOpen && (
         <div 
           className="absolute inset-0 z-[600] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 print:hidden"
           onClick={(e) => {
@@ -4163,67 +4273,28 @@ export default function MapComponent() {
            />
         )}
 
-        {userLocation && (() => {
-          const nextIndex = navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex;
-          const nextPoint = selectedLocations[nextIndex];
-          let bearingAngle = 0;
-          if (userLocation && nextPoint) {
-            bearingAngle = calculateBearing(userLocation[0], userLocation[1], nextPoint.lat, nextPoint.lng);
-          }
-          return (
-            <Marker 
-              position={userLocation}
-              icon={L.divIcon({
-                className: 'pulsing-gps-marker bg-transparent border-0',
-                html: isNavigationActive ? `
-                  <div style="position: relative; width: 44px; height: 44px; pointer-events: none; display: flex; align-items: center; justify-content: center;">
-                    <!-- Trailing dust particles -->
-                    <div class="dust-particle dust-1"></div>
-                    <div class="dust-particle dust-2"></div>
-                    <div class="dust-particle dust-3"></div>
-                    
-                    <!-- Pulse effect -->
-                    <div class="animate-ping" style="position: absolute; width: 36px; height: 36px; background-color: rgba(59, 130, 246, 0.25); border-radius: 50%;"></div>
-                    
-                    <!-- Rotated wrapper -->
-                    <div style="transform: rotate(${bearingAngle}deg); transition: transform 0.3s ease-out; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; position: relative; z-index: 20;">
-                      <!-- Custom 3D Vector Car Indicator -->
-                      <div style="background-color: #3b82f6; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 4px 10px rgba(59, 130, 246, 0.5); color: white;">
-                        <svg style="width: 14px; height: 14px; fill: white;" viewBox="0 0 24 24">
-                          <path d="M12,2L4.5,20.29L5.21,21L12,18L18.79,21L19.5,20.29L12,2Z" />
-                        </svg>
-                      </div>
-                    </div>
+        {userLocation && (
+          <Marker 
+            position={userLocation}
+            icon={L.divIcon({
+              className: 'pulsing-gps-marker bg-transparent border-0',
+              html: `
+                <div style="position: relative; width: 34px; height: 42px; pointer-events: none;">
+                  <div class="animate-ping" style="position: absolute; top: 0; left: 0; width: 34px; height: 34px; background-color: #3b82f6; border-radius: 50%; opacity: 0.7;"></div>
+                  <div style="background-color: #3b82f6; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative; z-index: 10;">
+                    🙋‍♂️
+                    <div style="position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #3b82f6;"></div>
                   </div>
-                ` : `
-                  <div style="position: relative; width: 34px; height: 42px; pointer-events: none;">
-                    <div class="animate-ping" style="position: absolute; top: 0; left: 0; width: 34px; height: 34px; background-color: #3b82f6; border-radius: 50%; opacity: 0.7;"></div>
-                    <div style="background-color: #3b82f6; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 3px solid white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative; z-index: 10;">
-                      🙋‍♂️
-                      <div style="position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 8px solid #3b82f6;"></div>
-                    </div>
-                  </div>
-                `,
-                iconSize: isNavigationActive ? [44, 44] : [34, 42],
-                iconAnchor: isNavigationActive ? [22, 22] : [17, 40]
-              })}
-            >
-              <Tooltip direction="top" offset={[0, isNavigationActive ? -10 : -20]} opacity={0.9} className="border-0 shadow-lg rounded-xl font-sans font-bold text-blue-700 bg-white/90 backdrop-blur-sm px-3 py-2 text-xs">
-                {isNavigationActive ? "🚗 Sizning yo'nalishingiz" : "📍 Siz shu yerdasiz"}
-              </Tooltip>
-            </Marker>
-          );
-        })()}
-
-        {/* Navigation Guidance Line */}
-        {isNavigationActive && userLocation && selectedLocations.length > 1 && (
-          <Polyline 
-            positions={[userLocation, [selectedLocations[navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex].lat, selectedLocations[navigationStepIndex === selectedLocations.length && isRoundtrip ? 0 : navigationStepIndex].lng]]} 
-            color="#ec4899" 
-            weight={4} 
-            dashArray="10, 10" 
-            opacity={0.8} 
-          />
+                </div>
+              `,
+              iconSize: [34, 42],
+              iconAnchor: [17, 40]
+            })}
+          >
+            <Tooltip direction="top" offset={[0, -20]} opacity={0.9} className="border-0 shadow-lg rounded-xl font-sans font-bold text-blue-700 bg-white/90 backdrop-blur-sm px-3 py-2 text-xs">
+              📍 Siz shu yerdasiz
+            </Tooltip>
+          </Marker>
         )}
         
         {filteredLocations.map((loc) => (
@@ -4387,6 +4458,28 @@ export default function MapComponent() {
                   );
                 })()}
 
+                {/* 1-tap Yandex / Google quick launch from popup */}
+                <div className="mt-1.5 grid grid-cols-2 gap-1">
+                  <a
+                    href={buildYandexMapsUrl([loc], userLocation, true)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="py-1.5 px-2 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-[9.5px] rounded-lg no-underline text-center flex items-center justify-center"
+                  >
+                    Yandex Nav
+                  </a>
+                  <a
+                    href={buildGoogleMapsUrl([loc], userLocation, true)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[9.5px] rounded-lg no-underline text-center flex items-center justify-center"
+                  >
+                    Google Maps
+                  </a>
+                </div>
+
                 {currentUser && (
                   <button 
                     onClick={(e) => { e.stopPropagation(); openEditModal(loc); }}
@@ -4491,16 +4584,7 @@ export default function MapComponent() {
           />
         )}
         {routeGeometry && (
-          isNavigationActive ? (
-            <>
-              {/* Deep green shadow outline */}
-              <Polyline positions={routeGeometry} color="#0b5c1c" weight={11} opacity={0.65} />
-              {/* High-visibility active neon green route line */}
-              <Polyline positions={routeGeometry} color="#10b981" weight={6.5} opacity={1.0} />
-            </>
-          ) : (
-            <Polyline positions={routeGeometry} color="#1e61f0" weight={6} opacity={0.85} />
-          )
+          <Polyline positions={routeGeometry} color="#1e61f0" weight={6} opacity={0.85} />
         )}
         {multiRouteGeometries && multiRouteGeometries.map((m, idx) => (
           <Polyline key={idx} positions={m.coords} color={m.color} weight={6} opacity={0.8} />
@@ -4559,8 +4643,7 @@ export default function MapComponent() {
       </div>
 
       {/* Mobile Toggle Navbar Button */}
-      {!isNavigationActive && (
-        <div className="print:hidden md:hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[400] pointer-events-auto w-[92%] max-w-sm">
+      <div className="print:hidden md:hidden absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[400] pointer-events-auto w-[92%] max-w-sm">
           <button 
              onClick={() => setIsMobilePanelOpen(!isMobilePanelOpen)} 
              className="w-full bg-slate-900 hover:bg-slate-800 px-4 py-3 rounded-2xl shadow-2xl border border-slate-800 flex items-center justify-between transition-all active:scale-95 text-white"
@@ -4590,11 +4673,10 @@ export default function MapComponent() {
                <span className="text-[9px] font-black tracking-widest text-indigo-300 uppercase shrink-0">Ochish</span>
              )}
           </button>
-        </div>
-      )}
+      </div>
 
       {/* Mobile Overlay */}
-      {isMobilePanelOpen && !isNavigationActive && (
+      {isMobilePanelOpen && (
         <div 
           className="md:hidden fixed inset-0 z-[440] bg-slate-900/40 backdrop-blur-sm transition-opacity pointer-events-auto"
           onClick={() => setIsMobilePanelOpen(false)}
@@ -4602,7 +4684,7 @@ export default function MapComponent() {
       )}
 
       {/* Sidebar: Marshrut va Logistika */}
-      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 md:left-auto left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'} ${isNavigationActive ? 'hidden pointer-events-none' : ''}`}>
+      <div className={`fixed md:absolute bottom-0 md:bottom-6 md:top-6 md:right-6 md:left-auto left-0 right-0 w-full md:w-96 z-[450] flex flex-col gap-2 md:gap-4 pointer-events-none print:hidden transition-transform duration-300 md:translate-y-0 ${isMobilePanelOpen ? 'translate-y-0' : 'translate-y-[100%]'}`}>
         
         {/* Selected Locations Panel */}
         <div className="flex-1 pointer-events-auto bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-t-3xl md:rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden max-h-[85vh] md:max-h-none h-full">
@@ -4822,15 +4904,44 @@ export default function MapComponent() {
             </div>
 
             {/* Configs, GPS addition, Checkboxes */}
-            <div className="pt-2.5 border-t border-slate-100 space-y-3">
+            <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
+              {/* Auto-Origin GPS toggle for Yandex & Google */}
+              <label className="flex items-start space-x-2.5 text-slate-700 cursor-pointer p-2 bg-sky-50/70 hover:bg-sky-50 border border-sky-200/80 rounded-xl transition-colors">
+                <input
+                  type="checkbox"
+                  checked={startFromMyLocation}
+                  onChange={(e) => setStartFromMyLocation(e.target.checked)}
+                  className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 w-4 h-4 mt-0.5 cursor-pointer shrink-0"
+                />
+                <div className="flex flex-col">
+                  <span className="text-xs font-extrabold text-slate-900">Joylashuvimdan boshlash (Avto GPS)</span>
+                  <span className="text-[10px] text-slate-500 leading-snug">
+                    Yandex va Google boshlang'ich nuqtani qayta so'ramasdan joriy GPS dan yo'l chizadi
+                  </span>
+                </div>
+              </label>
+
+              {/* Nearest-first quick sort button */}
+              {selectedLocations.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={handleSortNearestFirst}
+                  className="w-full min-h-[42px] rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-extrabold flex items-center justify-center space-x-1.5 transition-all active:scale-95 border border-amber-200 cursor-pointer"
+                  title="Joriy GPS joylashuvingizdan eng yaqinini birinchi qo'yib tartiblash"
+                >
+                  <Zap className="w-4 h-4 shrink-0 text-amber-600" />
+                  <span className="truncate">Eng yaqinidan tartibla (GPS)</span>
+                </button>
+              )}
+
               {/* Add GPS to Start button */}
               <button 
                 onClick={handleAddGPSToStart}
-                className="w-full h-[34px] rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black flex items-center justify-center space-x-1.5 transition-all active:scale-95 border border-indigo-100 cursor-pointer"
+                className="w-full min-h-[38px] rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-black flex items-center justify-center space-x-1.5 transition-all active:scale-95 border border-indigo-100 cursor-pointer"
                 title="Mening hozirgi GPS joylashuvimni marshrut boshiga birinchi nuqta qilib qo'yish"
               >
                 <LocateFixed className="w-4 h-4 shrink-0 text-indigo-600" />
-                <span className="truncate">Marshrut boshiga GPS joylashuvimni qo'shish</span>
+                <span className="truncate">Marshrut boshiga GPS nuqtasini qo'shish</span>
               </button>
 
               {selectedLocations.length > 0 && (
@@ -4945,93 +5056,57 @@ export default function MapComponent() {
               </button>
             </div>
 
-            {/* External Navigation Links (Visible when >= 2 locations exist) */}
-            {selectedLocations.length >= 2 && (
+            {/* External Navigation Links */}
+            {(selectedLocations.length >= 2 || (selectedLocations.length === 1 && startFromMyLocation)) && (
                <div className="pt-2.5 border-t border-slate-100 flex flex-col space-y-2">
                  <div className="flex justify-between items-center px-0.5">
                    <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-widest leading-none">
                      Navigatsiya boshlash:
                    </span>
                    {!routeStats && (
-                     <span className="text-[8px] font-extrabold bg-yellow-105 text-yellow-850 px-1.5 py-0.5 rounded leading-normal" title="Optimallashtirilgan marshrut olish uchun avval 'Marshrutni hisoblash' tugmasini bosing">
-                       ketma-ketlikda
+                     <span className="text-[9px] font-extrabold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded leading-normal" title="Optimallashtirilgan marshrut olish uchun avval 'Marshrutni hisoblash' tugmasini bosing">
+                       {startFromMyLocation ? "GPS dan boshlanadi" : "ketma-ketlikda"}
                      </span>
                    )}
                  </div>
 
-                 {/* Symmetrical 3-column row */}
-                 <div className="grid grid-cols-3 gap-1 px-0.5">
+                 {/* Navigation buttons row */}
+                 <div className="grid grid-cols-2 gap-2 px-0.5">
                    <a 
                      href={getGoogleMapsUrl(selectedLocations)}
                      target="_blank"
                      rel="noopener noreferrer"
-                     className="py-2 px-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] flex flex-col items-center justify-center space-y-1 transition-all active:scale-95 text-center no-underline cursor-pointer"
-                     title="Google Maps"
+                     className="min-h-[48px] py-2 px-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 text-center no-underline cursor-pointer shadow-sm"
+                     title="Google Maps da ochish"
                    >
                      <img src="https://upload.wikimedia.org/wikipedia/commons/a/a9/Google_Maps_icon_%282020%29.svg" className="w-4 h-4 shrink-0" alt="" />
-                     <span className="text-[9px] leading-tight font-black">Google Maps</span>
+                     <span>Google Maps</span>
                    </a>
 
                    <a 
                      href={getYandexMapsUrl(selectedLocations)}
                      target="_blank"
                      rel="noopener noreferrer"
-                     className="py-2 px-1 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-[10px] flex flex-col items-center justify-center space-y-1 transition-all active:scale-95 text-center no-underline cursor-pointer"
-                     title="Yandex Navigatsiya"
+                     className="min-h-[48px] py-2 px-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-black text-xs flex items-center justify-center space-x-1.5 transition-all active:scale-95 text-center no-underline cursor-pointer shadow-sm"
+                     title="Yandex Navigatsiyada ochish"
                    >
                      <svg className="w-4 h-4 fill-current shrink-0 text-white" viewBox="0 0 24 24">
                        <path d="M12.5 2C6.701 2 2 6.701 2 12.5S6.701 23 12.5 23 23 18.299 23 12.5 18.299 2 12.5 2zm1.751 14.125h-1.59l-.49 1.487h-1.3l1.884-5.263h1.492l1.884 5.263h-1.39l-.49-1.487zm-1.325-1.026h1.06l-.53-1.614-.53 1.614z"/>
                      </svg>
-                     <span className="text-[9px] leading-tight font-black">Yandex Nav</span>
+                     <span>Yandex Nav</span>
                    </a>
-
-                   <button
-                     type="button"
-                     onClick={() => {
-                       setIsNavigationActive(true);
-                       setNavigationStepIndex(1);
-                       setIsAutoCenter(true);
-                       setIsMobilePanelOpen(false);
-                       if (selectedLocations.length > 0) {
-                         const startLat = selectedLocations[0].lat;
-                         const startLng = selectedLocations[0].lng;
-                         setUserLocation([startLat, startLng]);
-                         if (mapRef.current) {
-                           mapRef.current.setView([startLat, startLng], 17);
-                         }
-                       }
-                       showToast("O'zimizning navigator faollashdi! Qurilmangiz GPS signali orqali yo'lingiz kuzatib boriladi.", "success");
-                     }}
-                     className="py-2 px-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] flex flex-col items-center justify-center space-y-1 transition-all active:scale-95 text-center cursor-pointer"
-                     title="GPS Navigator"
-                   >
-                     <Compass className="w-4 h-4 text-indigo-100 shrink-0" />
-                     <span className="text-[9px] leading-tight font-black">Yo'lga chiqish</span>
-                   </button>
                  </div>
 
-                 {/* Driver Mode & Telegram Share Row */}
-                 <div className="grid grid-cols-2 gap-1 px-0.5 mt-1">
-                   <button
-                     type="button"
-                     onClick={() => setIsDriverModeOpen(true)}
-                     className="py-2 px-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-black text-[10px] flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
-                     title="Haydovchi rejimi: Har bir to'xtash uchun Yandex/Google navigatsiya va yetkazish nazorati"
-                   >
-                     <Car className="w-3.5 h-3.5 shrink-0 text-slate-950" />
-                     <span className="leading-tight">Haydovchi rejimi</span>
-                   </button>
-
-                   <button
-                     type="button"
-                     onClick={() => setIsTelegramModalOpen(true)}
-                     className="py-2 px-1.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-black text-[10px] flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
-                     title="Telegramga yuborish: Haydovchiga to'liq marshrut va navigator havolalarini ulashish"
-                   >
-                     <Send className="w-3.5 h-3.5 shrink-0" />
-                     <span className="leading-tight">Telegramga</span>
-                   </button>
-                 </div>
+                 {/* Telegram Share Button */}
+                 <button
+                   type="button"
+                   onClick={() => setIsTelegramModalOpen(true)}
+                   className="w-full min-h-[42px] py-2 px-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-black text-xs flex items-center justify-center space-x-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                   title="Telegramga yuborish: Haydovchiga to'liq marshrut va navigator havolalarini ulashish"
+                 >
+                   <Send className="w-3.5 h-3.5 shrink-0" />
+                   <span>Telegramga yuborish</span>
+                 </button>
                </div>
             )}
           </div>
@@ -5163,24 +5238,14 @@ export default function MapComponent() {
                               <span>Sarlavhani ochish</span>
                             </a>
                           </div>
-                          <div className="flex space-x-2 w-full">
-                            <button
-                              type="button"
-                              onClick={() => setIsDriverModeOpen(true)}
-                              className="flex-1 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-black text-[10px] rounded-xl flex items-center justify-center space-x-1 transition-all cursor-pointer shadow-sm"
-                            >
-                              <Car className="w-3.5 h-3.5 shrink-0" />
-                              <span>Haydovchi rejimi</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setIsTelegramModalOpen(true)}
-                              className="flex-1 py-2 bg-sky-500 hover:bg-sky-600 text-white font-black text-[10px] rounded-xl flex items-center justify-center space-x-1 transition-all cursor-pointer shadow-sm"
-                            >
-                              <Send className="w-3.5 h-3.5 shrink-0" />
-                              <span>Telegram</span>
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsTelegramModalOpen(true)}
+                            className="w-full py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-black text-[11px] rounded-xl flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm"
+                          >
+                            <Send className="w-3.5 h-3.5 shrink-0" />
+                            <span>Telegramga yuborish</span>
+                          </button>
                         </div>
                       </>
                     );
@@ -5304,50 +5369,24 @@ export default function MapComponent() {
         </div>
       )}
 
-      {/* Absolute floating speed limit sign overlay */}
-      {isNavigationActive && (
-        <div className="absolute top-4 right-4 z-[999] pointer-events-auto flex flex-col items-center space-y-1 animate-in zoom-in-75 duration-300">
-          <div 
-            onClick={() => {
-              // Cycles speed limit manually: 30 -> 50 -> 60 -> 70
-              setSpeedLimit(prev => prev === 70 ? 30 : prev === 60 ? 70 : prev === 50 ? 60 : prev === 30 ? 50 : 60);
-              showToast("Yo'lning tezlik cheklovi qo'lda o'zgartirildi", "info");
-            }}
-            title="Tezlik cheklovini o'zgartirish uchun bosing"
-            className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-white border-[5px] md:border-[6px] border-red-500 shadow-2xl flex items-center justify-center cursor-pointer select-none active:scale-95 transition-transform duration-100"
-          >
-            <span className="font-sans font-black text-xl md:text-2xl text-slate-900 tracking-tighter">
-              {speedLimit}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Driver Mode Modal */}
-      <DriverModeModal
-        isOpen={isDriverModeOpen}
-        onClose={() => setIsDriverModeOpen(false)}
-        locations={selectedLocations}
-        routeStats={routeStats}
-        onOpenInAppNavigator={() => {
-          setIsNavigationActive(true);
-          setNavigationStepIndex(1);
-          setIsAutoCenter(true);
-          setIsMobilePanelOpen(false);
-          if (selectedLocations.length > 0) {
-            const startLat = selectedLocations[0].lat;
-            const startLng = selectedLocations[0].lng;
-            setUserLocation([startLat, startLng]);
-            if (mapRef.current) {
-              mapRef.current.setView([startLat, startLng], 17);
-            }
-          }
-          showToast("O'zimizning navigator faollashdi!", "success");
+      {/* Resizable Quick Widget Panel */}
+      <QuickWidgetPanel
+        isOpen={isWidgetOpen}
+        onClose={() => setIsWidgetOpen(false)}
+        locations={filteredLocations}
+        selectedLocations={selectedLocations}
+        userLocation={userLocation}
+        fallbackCenter={center}
+        onRequestGps={handleGetLocation}
+        onToggleLocation={handleToggleWidgetLocation}
+        onSetSelectedLocations={handleSetWidgetLocations}
+        onClearSelected={handleClearRoute}
+        onBuildRouteFromGps={handleWidgetBuildRouteFromGps}
+        onQuickNearestRoute={(pool) => {
+          setIsWidgetOpen(false);
+          handleQuickNearestRoute(pool);
         }}
-        onOpenTelegramShare={() => {
-          setIsDriverModeOpen(false);
-          setIsTelegramModalOpen(true);
-        }}
+        showToast={showToast}
       />
 
       {/* Telegram Route Dispatch Modal */}
@@ -5356,6 +5395,9 @@ export default function MapComponent() {
         onClose={() => setIsTelegramModalOpen(false)}
         locations={selectedLocations}
         routeStats={routeStats}
+        userLocation={userLocation}
+        startFromMyLocation={startFromMyLocation}
+        isRoundtrip={isRoundtrip}
         showToast={showToast}
       />
     </div>
